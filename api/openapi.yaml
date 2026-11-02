@@ -1,0 +1,243 @@
+openapi: 3.0.3
+info:
+  title: Currency Quotes API
+  version: 1.0.0
+  description: |
+    Asynchronous currency quote refresh service.
+    Clients request a refresh and poll its status using the returned update ID.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+paths:
+  /api/v1/quotes/updates:
+    post:
+      summary: Request a quote refresh
+      operationId: requestQuoteUpdate
+      tags: [Quotes]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: |
+            Client-generated key (a UUID is recommended) that makes retries safe.
+            A retry with the same key and pair returns the original updateId and starts no new refresh.
+          schema:
+            type: string
+            maxLength: 255
+          example: 8e3b1c2a-4f5d-4e6a-9b7c-1d2e3f4a5b6c
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQuoteRequest'
+            example:
+              currencyPair: EUR/MXN
+      responses:
+        '202':
+          description: Refresh accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateAcceptedResponse'
+              example:
+                updateId: 550e8400-e29b-41d4-a716-446655440000
+                status: pending
+          headers:
+            Location:
+              description: URL to poll for the refresh result
+              schema:
+                type: string
+              example: /api/v1/quotes/updates/550e8400-e29b-41d4-a716-446655440000
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/IdempotencyKeyReused'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/quotes/updates/{updateId}:
+    get:
+      summary: Get a quote refresh result
+      operationId: getQuoteUpdate
+      tags: [Quotes]
+      parameters:
+        - name: updateId
+          in: path
+          required: true
+          description: Identifier returned when the refresh was requested
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current state of the refresh operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatusResponse'
+              examples:
+                pending:
+                  value:
+                    updateId: 550e8400-e29b-41d4-a716-446655440000
+                    currencyPair: EUR/MXN
+                    status: pending
+                completed:
+                  value:
+                    updateId: 550e8400-e29b-41d4-a716-446655440000
+                    currencyPair: EUR/MXN
+                    status: completed
+                    price: '21.450000'
+                    updatedAt: '2026-10-29T08:30:00Z'
+                    sourceDate: '2026-10-29'
+                failed:
+                  value:
+                    updateId: 550e8400-e29b-41d4-a716-446655440000
+                    currencyPair: EUR/MXN
+                    status: failed
+                    error: Quote provider unavailable
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/quotes/latest:
+    get:
+      summary: Get the latest available quote
+      operationId: getLatestQuote
+      tags: [Quotes]
+      parameters:
+        - name: currencyPair
+          in: query
+          required: true
+          description: Currency pair in BASE/QUOTE format; slash must be URL-encoded in requests
+          schema:
+            $ref: '#/components/schemas/CurrencyPair'
+          example: EUR/MXN
+      responses:
+        '200':
+          description: Latest stored quote for the requested currency pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+              example:
+                currencyPair: EUR/MXN
+                price: '21.450000'
+                updatedAt: '2026-10-29T08:30:00Z'
+                sourceDate: '2026-10-29'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  schemas:
+    CurrencyPair:
+      type: string
+      description: ISO 4217 currency pair in BASE/QUOTE notation
+      pattern: '^[A-Z]{3}/[A-Z]{3}$'
+      example: EUR/MXN
+    UpdateQuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [currencyPair]
+      properties:
+        currencyPair:
+          $ref: '#/components/schemas/CurrencyPair'
+    UpdateStatus:
+      type: string
+      enum: [pending, completed, failed]
+    UpdateAcceptedResponse:
+      type: object
+      required: [updateId, status]
+      properties:
+        updateId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/UpdateStatus'
+    Quote:
+      type: object
+      required: [currencyPair, price, updatedAt]
+      properties:
+        currencyPair:
+          $ref: '#/components/schemas/CurrencyPair'
+        price:
+          type: string
+          description: Decimal exchange rate represented as a string to avoid binary floating-point rounding
+          pattern: '^[0-9]+(\.[0-9]+)?$'
+          example: '21.450000'
+        updatedAt:
+          type: string
+          format: date-time
+          description: Time at which the quote was refreshed (RFC 3339)
+        sourceDate:
+          type: string
+          format: date
+          description: Date the provider's rate applies to; may lag updatedAt, as rates are published once per business day
+    UpdateStatusResponse:
+      type: object
+      required: [updateId, currencyPair, status]
+      properties:
+        updateId:
+          type: string
+          format: uuid
+        currencyPair:
+          $ref: '#/components/schemas/CurrencyPair'
+        status:
+          $ref: '#/components/schemas/UpdateStatus'
+        price:
+          type: string
+          pattern: '^[0-9]+(\.[0-9]+)?$'
+          description: Present only when status is completed
+        updatedAt:
+          type: string
+          format: date-time
+          description: Present only when status is completed
+        sourceDate:
+          type: string
+          format: date
+          description: Date the provider's rate applies to; present only when status is completed and the provider reported it
+        error:
+          type: string
+          description: Present only when status is failed
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: QUOTE_NOT_FOUND
+        message:
+          type: string
+          example: No quote is available for the requested currency pair
+  responses:
+    BadRequest:
+      description: Invalid request parameters or body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    IdempotencyKeyReused:
+      description: The Idempotency-Key was already used for a different currency pair
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: IDEMPOTENCY_KEY_REUSED
+            message: idempotency conflict
+    NotFound:
+      description: Requested update or quote was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

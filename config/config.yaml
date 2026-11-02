@@ -1,0 +1,26 @@
+http:
+  port: "8080"
+  read_timeout: 5s
+  write_timeout: 10s
+  shutdown_timeout: 15s
+
+database:
+  url: "postgres://currency:currency@localhost:5442/currency?sslmode=disable"
+  max_open_conns: 10
+  max_idle_conns: 5
+
+provider:
+  base_url: "https://api.frankfurter.dev"
+  timeout: 5s
+  rps: 5
+  burst: 5
+  max_pairs_per_request: 1
+
+worker:
+  workers: 4
+  poll_interval: 1s
+  batch_size: 100
+  lock_ttl: 30s
+  max_attempts: 3
+  retry_backoff: 2s
+  max_backoff: 1m

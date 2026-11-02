@@ -1,0 +1,15 @@
+# build
+bin/
+*.test
+
+# profiles and coverage
+*.out
+*.prof
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# local env overrides
+.env

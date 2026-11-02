@@ -1,0 +1,1 @@
+ALTER TABLE quote_updates DROP COLUMN idempotency_key;

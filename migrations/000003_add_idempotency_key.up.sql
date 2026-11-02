@@ -1,0 +1,1 @@
+ALTER TABLE quote_updates ADD COLUMN idempotency_key TEXT UNIQUE;

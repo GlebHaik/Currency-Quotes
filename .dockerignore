@@ -1,0 +1,9 @@
+.git
+.idea
+.vscode
+.DS_Store
+bin
+*.out
+*.test
+docker-compose.yml
+Dockerfile
