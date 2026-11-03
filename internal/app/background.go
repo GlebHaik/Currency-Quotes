@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -146,7 +147,8 @@ func (b *background) work(ctx context.Context, id int) {
 func (b *background) handle(ctx context.Context, id int, batch service.Batch) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("panic in worker", "worker", id, "pair", batch.Pair.String(), "panic", r)
+			slog.Error("panic in worker", "worker", id, "pair", batch.Pair.String(), "panic", r,
+				"stack", string(debug.Stack()))
 		}
 	}()
 	if err := b.processor.Process(ctx, batch); err != nil {

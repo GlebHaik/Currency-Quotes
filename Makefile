@@ -25,7 +25,7 @@ reset-db: ## Stop all containers and delete the data
 	docker compose down -v
 
 run: ## Run the service locally (HTTP_PORT=8085 by default)
-	HTTP_PORT=$(HTTP_PORT) go run ./cmd/server
+	HTTP_PORT=$(HTTP_PORT) LOG_FORMAT=text go run ./cmd/server
 
 build: ## Build the binary into bin/
 	go build -o $(BIN) ./cmd/server

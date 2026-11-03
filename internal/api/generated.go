@@ -114,6 +114,9 @@ type InternalError = ErrorResponse
 // NotFound defines model for NotFound.
 type NotFound = ErrorResponse
 
+// PayloadTooLarge defines model for PayloadTooLarge.
+type PayloadTooLarge = ErrorResponse
+
 // Timeout defines model for Timeout.
 type Timeout = ErrorResponse
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -116,9 +115,6 @@ func TestQuoteUpdater_Process(t *testing.T) {
 	delayIn := func(lo, hi time.Duration) gomock.Matcher {
 		return gomock.Cond(func(d time.Duration) bool { return d >= lo && d <= hi })
 	}
-	reasonHas := func(s string) gomock.Matcher {
-		return gomock.Cond(func(reason string) bool { return strings.Contains(reason, s) })
-	}
 	// alive checks the store write is not cut short by a cancelled request context.
 	alive := gomock.Cond(func(ctx context.Context) bool { return ctx.Err() == nil })
 
@@ -146,7 +142,7 @@ func TestQuoteUpdater_Process(t *testing.T) {
 			setup: func(m updaterMocks, _ context.CancelFunc) {
 				m.provider.EXPECT().Rate(gomock.Any(), eurXXX).
 					Return(domain.Rate{}, fmt.Errorf("%w: invalid currency: XXX", domain.ErrPermanent))
-				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonHas("invalid currency: XXX")).Return(nil)
+				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonUnsupportedPair).Return(nil)
 			},
 		},
 		{
@@ -162,7 +158,7 @@ func TestQuoteUpdater_Process(t *testing.T) {
 			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 3},
 			setup: func(m updaterMocks, _ context.CancelFunc) {
 				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).Return(domain.Rate{}, unavailable)
-				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonHas("503")).Return(nil)
+				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonProviderUnavailable).Return(nil)
 			},
 		},
 		{

@@ -39,6 +39,13 @@ type Batch struct {
 	Attempts int
 }
 
+// Failure reasons stored for clients. The provider's own error may carry URLs and network
+// details, so it goes to the log only.
+const (
+	reasonUnsupportedPair     = "currency pair is not supported by the provider"
+	reasonProviderUnavailable = "quote provider is unavailable, try again later"
+)
+
 type UpdaterConfig struct {
 	// LockTTL must exceed channel wait + rate-limit wait + provider timeout,
 	// or a lease expires mid-flight and the update is claimed twice.
@@ -137,22 +144,30 @@ func (u *QuoteUpdater) finish(ctx context.Context, b Batch, rate domain.Rate, er
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), u.cfg.FinalizeTimeout)
 	defer cancel()
 
+	log := u.log.With("pair", b.Pair.String(), "updates", len(b.IDs), "attempt", b.Attempts)
+
 	switch {
 	case err == nil:
 		q := domain.Quote{CurrencyPair: b.Pair, Price: rate.Price, UpdatedAt: u.now().UTC(), SourceDate: rate.Date}
 		if err := u.store.CompleteUpdates(ctx, b.IDs, q); err != nil {
 			return fmt.Errorf("complete updates of %s: %w", b.Pair, err)
 		}
+		log.Info("quote updated", "price", rate.Price)
 	case errors.Is(err, domain.ErrPermanent) || b.Attempts >= u.cfg.MaxAttempts:
-		if err := u.store.FailUpdates(ctx, b.IDs, err.Error()); err != nil {
+		reason := reasonProviderUnavailable
+		if errors.Is(err, domain.ErrPermanent) {
+			reason = reasonUnsupportedPair
+		}
+		if err := u.store.FailUpdates(ctx, b.IDs, reason); err != nil {
 			return fmt.Errorf("fail updates of %s: %w", b.Pair, err)
 		}
+		log.Warn("updates failed", "reason", reason, "err", err)
 	default:
 		delay := u.backoff(b.Attempts, err)
-		u.log.Warn("provider call failed, retrying", "pair", b.Pair.String(), "attempt", b.Attempts, "in", delay, "err", err)
 		if err := u.store.RetryLater(ctx, b.IDs, delay); err != nil {
 			return fmt.Errorf("retry updates of %s: %w", b.Pair, err)
 		}
+		log.Warn("provider call failed, retrying", "in", delay, "err", err)
 	}
 	return nil
 }

@@ -52,6 +52,8 @@ paths:
               example: /api/v1/quotes/updates/550e8400-e29b-41d4-a716-446655440000
         '400':
           $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/IdempotencyKeyReused'
         '500':
@@ -97,7 +99,7 @@ paths:
                     updateId: 550e8400-e29b-41d4-a716-446655440000
                     currencyPair: EUR/MXN
                     status: failed
-                    error: Quote provider unavailable
+                    error: currency pair is not supported by the provider
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -227,6 +229,15 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    PayloadTooLarge:
+      description: Request body exceeds 1 KiB
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: BODY_TOO_LARGE
+            message: Request body is too large
     IdempotencyKeyReused:
       description: The Idempotency-Key was already used for a different currency pair
       content:

@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"log/slog"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -28,5 +31,28 @@ func run(configPath string) error {
 	if err != nil {
 		return err
 	}
+	logger, err := newLogger(cfg.Log)
+	if err != nil {
+		return err
+	}
+	slog.SetDefault(logger)
+
 	return app.Run(ctx, cfg)
+}
+
+func newLogger(cfg config.LogConfig) (*slog.Logger, error) {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
+		return nil, fmt.Errorf("log level: %w", err)
+	}
+	opts := &slog.HandlerOptions{Level: level}
+
+	switch cfg.Format {
+	case "json":
+		return slog.New(slog.NewJSONHandler(os.Stdout, opts)), nil
+	case "text":
+		return slog.New(slog.NewTextHandler(os.Stdout, opts)), nil
+	default:
+		return nil, fmt.Errorf("log format %q: want json or text", cfg.Format)
+	}
 }

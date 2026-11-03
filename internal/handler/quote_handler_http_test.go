@@ -36,10 +36,12 @@ type httpCase struct {
 	req        *http.Request
 	setup      func(m *mocks.MockQuoteService)
 	wantStatus int
-	wantBody   string
+	// wantBody is JSON, or empty for an answer without a body.
+	wantBody    string
+	wantHeaders map[string]string
 }
 
-// run serves each case through route with a fresh mock and checks the status and the JSON body.
+// run serves each case through route with a fresh mock and checks the status, headers and body.
 // Any service call a case did not expect fails it through the gomock controller.
 func run(t *testing.T, cases []httpCase, route func(h *QuoteHandler) http.HandlerFunc) {
 	t.Helper()
@@ -55,6 +57,17 @@ func run(t *testing.T, cases []httpCase, route func(h *QuoteHandler) http.Handle
 
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status %d, want %d; body %s", rec.Code, tc.wantStatus, rec.Body)
+			}
+			for name, want := range tc.wantHeaders {
+				if got := rec.Header().Get(name); got != want {
+					t.Fatalf("%s %q, want %q", name, got, want)
+				}
+			}
+			if tc.wantBody == "" {
+				if rec.Body.Len() != 0 {
+					t.Fatalf("body %q, want none", rec.Body)
+				}
+				return
 			}
 			if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 				t.Fatalf("Content-Type %q, want application/json", ct)
@@ -98,8 +111,9 @@ func TestRequestQuoteUpdate(t *testing.T) {
 			setup: func(m *mocks.MockQuoteService) {
 				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, gomock.Nil()).Return(updateID, nil)
 			},
-			wantStatus: http.StatusAccepted,
-			wantBody:   accepted,
+			wantStatus:  http.StatusAccepted,
+			wantBody:    accepted,
+			wantHeaders: map[string]string{"Location": "/api/v1/quotes/updates/550e8400-e29b-41d4-a716-446655440000"},
 		},
 		{
 			name: "key in upper case reaches the service normalised",
@@ -115,6 +129,27 @@ func TestRequestQuoteUpdate(t *testing.T) {
 			req:        postUpdate(`{"currencyPair":`, ""),
 			wantStatus: http.StatusBadRequest,
 			wantBody:   `{"code":"INVALID_BODY","message":"Invalid JSON body"}`,
+		},
+		{
+			name:       "unknown field, as the spec forbids additional properties",
+			req:        postUpdate(`{"currencyPair":"EUR/MXN","pair":"EUR/USD"}`, ""),
+			wantStatus: http.StatusBadRequest,
+			wantBody:   `{"code":"INVALID_BODY","message":"Invalid JSON body"}`,
+		},
+		{
+			name:       "body over the limit is not read to the end",
+			req:        postUpdate(`{"currencyPair":"`+strings.Repeat("A", maxBodyBytes)+`"}`, ""),
+			wantStatus: http.StatusRequestEntityTooLarge,
+			wantBody:   `{"code":"BODY_TOO_LARGE","message":"Request body is too large"}`,
+		},
+		{
+			name: "client gone: no body and no error",
+			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, ""),
+			setup: func(m *mocks.MockQuoteService) {
+				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, gomock.Nil()).
+					Return(uuid.Nil, fmt.Errorf("save update: %w", context.Canceled))
+			},
+			wantStatus: statusClientClosedRequest,
 		},
 		{
 			name:       "key that is not a UUID",
@@ -162,7 +197,7 @@ func TestGetQuoteUpdate(t *testing.T) {
 	completed := op(domain.StatusCompleted)
 	completed.Quote = &domain.Quote{CurrencyPair: eurMXN, Price: "20.955000", UpdatedAt: updatedAt, SourceDate: sourceDay}
 	failed := op(domain.StatusFailed)
-	failed.Error = "frankfurter: invalid currency: XXX (HTTP 422)"
+	failed.Error = "currency pair is not supported by the provider"
 
 	run(t, []httpCase{
 		{
@@ -188,7 +223,7 @@ func TestGetQuoteUpdate(t *testing.T) {
 			setup:      func(m *mocks.MockQuoteService) { m.EXPECT().GetUpdate(gomock.Any(), updateID).Return(failed, nil) },
 			wantStatus: http.StatusOK,
 			wantBody: `{"updateId":"550e8400-e29b-41d4-a716-446655440000","currencyPair":"EUR/MXN","status":"failed",
-				"error":"frankfurter: invalid currency: XXX (HTTP 422)"}`,
+				"error":"currency pair is not supported by the provider"}`,
 		},
 		{
 			name:       "ID that is not a UUID",

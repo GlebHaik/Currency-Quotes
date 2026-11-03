@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -64,11 +63,13 @@ func Run(ctx context.Context, cfg *config.Config) error {
 
 	g.Go(func() error {
 		bg.Run(gctx)
+		slog.Info("background processing stopped")
 		return nil
 	})
 
 	g.Go(func() error {
-		slog.Info("http server started", "addr", srv.Addr)
+		slog.Info("http server started", "addr", srv.Addr, "workers", cfg.Background.Workers,
+			"provider", cfg.Provider.BaseURL, "provider_rps", cfg.Provider.RPS)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("http server: %w", err)
 		}
@@ -80,43 +81,38 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		slog.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.HTTP.ShutdownTimeout)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("http shutdown: %w", err)
+		}
+		slog.Info("http server stopped")
+		return nil
 	})
 
 	return g.Wait()
 }
 
 func newHTTPServer(cfg config.HTTPConfig, h *handler.QuoteHandler) *http.Server {
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(requestTimeout(cfg.RequestTimeout))
-	r.Post("/api/v1/quotes/updates", h.RequestQuoteUpdate)
-	r.Get("/api/v1/quotes/updates/{updateId}", h.GetQuoteUpdate)
-	r.Get("/api/v1/quotes/latest", h.GetLatestQuote)
-
 	return &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      r,
+		Handler:      newRouter(cfg, h),
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 	}
 }
 
-// requestTimeout puts a deadline on every request, so a hung database call is cancelled instead
-// of holding a pool connection. Unlike chi's middleware.Timeout it writes no response itself:
-// the handler sees context.DeadlineExceeded and answers 504 in the usual JSON format.
-func requestTimeout(d time.Duration) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		if d <= 0 {
-			return next
-		}
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx, cancel := context.WithTimeout(r.Context(), d)
-			defer cancel()
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
-	}
+func newRouter(cfg config.HTTPConfig, h *handler.QuoteHandler) chi.Router {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(accessLog) // outside Recoverer, so a panic is logged with its 500
+	r.Use(handler.Recoverer)
+	r.Use(requestTimeout(cfg.RequestTimeout))
+	r.NotFound(handler.NotFound)
+	r.MethodNotAllowed(allowMethods(r, handler.MethodNotAllowed))
+
+	r.Post("/api/v1/quotes/updates", h.RequestQuoteUpdate)
+	r.Get("/api/v1/quotes/updates/{updateId}", h.GetQuoteUpdate)
+	r.Get("/api/v1/quotes/latest", h.GetLatestQuote)
+	return r
 }
 
 func runMigrations(cfg config.DatabaseConfig) error {
@@ -132,6 +128,8 @@ func runMigrations(cfg config.DatabaseConfig) error {
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
+	version, _, _ := m.Version()
+	slog.Info("migrations applied", "version", version)
 	return nil
 }
 

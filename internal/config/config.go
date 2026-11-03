@@ -8,11 +8,19 @@ import (
 )
 
 type Config struct {
+	Log        LogConfig        `yaml:"log"`
 	HTTP       HTTPConfig       `yaml:"http"`
 	Database   DatabaseConfig   `yaml:"database"`
 	Provider   ProviderConfig   `yaml:"provider"`
 	Updater    UpdaterConfig    `yaml:"updater"`
 	Background BackgroundConfig `yaml:"background"`
+}
+
+type LogConfig struct {
+	// Level is debug, info, warn or error.
+	Level string `yaml:"level" env:"LOG_LEVEL" env-default:"info"`
+	// Format is json or text.
+	Format string `yaml:"format" env:"LOG_FORMAT" env-default:"json"`
 }
 
 type HTTPConfig struct {

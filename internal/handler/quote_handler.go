@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -30,9 +29,18 @@ func NewQuoteHandler(s QuoteService) *QuoteHandler {
 	return &QuoteHandler{service: s}
 }
 
+// maxBodyBytes is far above any valid request, which is a few dozen bytes.
+const maxBodyBytes = 1 << 10
+
 func (h *QuoteHandler) RequestQuoteUpdate(w http.ResponseWriter, r *http.Request) {
 	var request api.UpdateQuoteRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&request); err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, "BODY_TOO_LARGE", "Request body is too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "INVALID_BODY", "Invalid JSON body")
 		return
 	}
@@ -55,6 +63,7 @@ func (h *QuoteHandler) RequestQuoteUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	w.Header().Set("Location", r.URL.JoinPath(updateID.String()).Path)
 	writeJSON(w, http.StatusAccepted, api.UpdateAcceptedResponse{UpdateId: updateID, Status: api.Pending})
 }
 
@@ -127,33 +136,4 @@ func sourceDate(q domain.Quote) *openapi_types.Date {
 		return nil
 	}
 	return &openapi_types.Date{Time: q.SourceDate}
-}
-
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, api.ErrorResponse{Code: code, Message: message})
-}
-
-// writeServiceError answers with fixed messages: err may be wrapped with internal details.
-func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, domain.ErrInvalidPair):
-		writeError(w, http.StatusBadRequest, "INVALID_PAIR", "Currency pair must look like EUR/MXN")
-	case errors.Is(err, domain.ErrNotFound):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Not found")
-	case errors.Is(err, domain.ErrIdempotencyConflict):
-		writeError(w, http.StatusUnprocessableEntity, "IDEMPOTENCY_KEY_REUSED",
-			"Idempotency-Key was already used for another currency pair")
-	case errors.Is(err, context.DeadlineExceeded):
-		slog.Warn("request timed out", "method", r.Method, "path", r.URL.Path, "err", err)
-		writeError(w, http.StatusGatewayTimeout, "TIMEOUT", "Request timed out")
-	default:
-		slog.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
-	}
 }
