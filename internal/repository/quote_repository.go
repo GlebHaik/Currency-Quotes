@@ -23,16 +23,19 @@ func NewQuoteRepository(pool *pgxpool.Pool) *QuoteRepository {
 
 const updateColumns = `id, pair, status, price::text, error, attempts, created_at, updated_at, source_date`
 
+// SaveUpdate inserts u, or returns the existing update with the same idempotency key.
 func (r *QuoteRepository) SaveUpdate(ctx context.Context, u domain.UpdateOperation) (domain.UpdateOperation, error) {
 	row := r.pool.QueryRow(ctx, `
-	INSERT INTO quote_updates (id, pair, status, created_at, idempotency_key)
-	VALUES ($1, $2, $3, $4, $5)
-	ON CONFLICT (idempotency_key) DO NOTHING
-	RETURNING `+updateColumns,
-		u.ID, u.CurrencyPair, u.Status, u.CreatedAt, u.IdempotencyKey)
+		INSERT INTO quote_updates (id, pair, status, created_at, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (idempotency_key) DO NOTHING
+		RETURNING `+updateColumns,
+		u.ID, u.CurrencyPair.String(), u.Status, u.CreatedAt, u.IdempotencyKey)
 
 	saved, err := scanUpdate(row)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// A separate statement takes a fresh snapshot, so it sees a row that a concurrent
+		// request with the same key has just committed; the INSERT above cannot.
 		row = r.pool.QueryRow(ctx,
 			`SELECT `+updateColumns+` FROM quote_updates WHERE idempotency_key = $1`, u.IdempotencyKey)
 		saved, err = scanUpdate(row)
@@ -55,11 +58,11 @@ func (r *QuoteRepository) GetUpdate(ctx context.Context, id uuid.UUID) (domain.U
 	return u, nil
 }
 
-func (r *QuoteRepository) GetLatestQuote(ctx context.Context, pair string) (domain.Quote, error) {
+func (r *QuoteRepository) GetLatestQuote(ctx context.Context, pair domain.CurrencyPair) (domain.Quote, error) {
 	q := domain.Quote{CurrencyPair: pair}
 	var sourceDate *time.Time
 	err := r.pool.QueryRow(ctx,
-		`SELECT price::text, updated_at, source_date FROM quotes WHERE pair = $1`, pair).
+		`SELECT price::text, updated_at, source_date FROM quotes WHERE pair = $1`, pair.String()).
 		Scan(&q.Price, &q.UpdatedAt, &sourceDate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Quote{}, domain.ErrNotFound
@@ -73,6 +76,8 @@ func (r *QuoteRepository) GetLatestQuote(ctx context.Context, pair string) (doma
 	return q, nil
 }
 
+// ClaimPending leases up to limit pending updates and counts an attempt for each. SKIP LOCKED lets
+// concurrent claims take different rows; a lease that expires returns the row to the queue.
 func (r *QuoteRepository) ClaimPending(ctx context.Context, limit int, lease time.Duration) ([]domain.UpdateOperation, error) {
 	rows, err := r.pool.Query(ctx, `
 		UPDATE quote_updates
@@ -98,6 +103,8 @@ func (r *QuoteRepository) ClaimPending(ctx context.Context, limit int, lease tim
 	return updates, nil
 }
 
+// CompleteUpdates records the price on the updates and in quotes in one transaction,
+// so the two tables never disagree.
 func (r *QuoteRepository) CompleteUpdates(ctx context.Context, ids []uuid.UUID, q domain.Quote) error {
 	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
@@ -136,13 +143,14 @@ func (r *QuoteRepository) RetryLater(ctx context.Context, ids []uuid.UUID, delay
 	return nil
 }
 
+// saveQuote upserts the latest quote but never replaces a newer one with an older one.
 func saveQuote(ctx context.Context, tx pgx.Tx, q domain.Quote) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO quotes (pair, price, updated_at, source_date) VALUES ($1, $2::numeric, $3, $4)
 		ON CONFLICT (pair) DO UPDATE
 		SET price = EXCLUDED.price, updated_at = EXCLUDED.updated_at, source_date = EXCLUDED.source_date
 		WHERE quotes.updated_at < EXCLUDED.updated_at`,
-		q.CurrencyPair, q.Price, q.UpdatedAt, nullDate(q.SourceDate))
+		q.CurrencyPair.String(), q.Price, q.UpdatedAt, nullDate(q.SourceDate))
 	if err != nil {
 		return fmt.Errorf("upsert quote: %w", err)
 	}
@@ -152,12 +160,17 @@ func saveQuote(ctx context.Context, tx pgx.Tx, q domain.Quote) error {
 func scanUpdate(row pgx.Row) (domain.UpdateOperation, error) {
 	var (
 		u          domain.UpdateOperation
+		pair       string
 		price      *string
 		errText    *string
 		updatedAt  *time.Time
 		sourceDate *time.Time
 	)
-	if err := row.Scan(&u.ID, &u.CurrencyPair, &u.Status, &price, &errText, &u.Attempts, &u.CreatedAt, &updatedAt, &sourceDate); err != nil {
+	if err := row.Scan(&u.ID, &pair, &u.Status, &price, &errText, &u.Attempts, &u.CreatedAt, &updatedAt, &sourceDate); err != nil {
+		return domain.UpdateOperation{}, err
+	}
+	var err error
+	if u.CurrencyPair, err = domain.ParseCurrencyPair(pair); err != nil {
 		return domain.UpdateOperation{}, err
 	}
 	if errText != nil {

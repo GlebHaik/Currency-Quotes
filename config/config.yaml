@@ -8,6 +8,7 @@ http:
 database:
   url: "postgres://currency:currency@localhost:5442/currency?sslmode=disable"
   max_open_conns: 10
+  migrations_dir: migrations
 
 provider:
   base_url: "https://api.frankfurter.dev"
@@ -28,3 +29,5 @@ background:
   workers: 4
   poll_interval: 1s
   batch_size: 100
+  # Claimed batches waiting for a worker; keep the wait well under updater.lock_ttl.
+  queue_size: 64

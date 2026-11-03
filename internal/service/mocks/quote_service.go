@@ -43,7 +43,7 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 }
 
 // GetLatestQuote mocks base method.
-func (m *MockRepository) GetLatestQuote(ctx context.Context, pair string) (domain.Quote, error) {
+func (m *MockRepository) GetLatestQuote(ctx context.Context, pair domain.CurrencyPair) (domain.Quote, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetLatestQuote", ctx, pair)
 	ret0, _ := ret[0].(domain.Quote)
@@ -70,13 +70,13 @@ func (c *MockRepositoryGetLatestQuoteCall) Return(arg0 domain.Quote, arg1 error)
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRepositoryGetLatestQuoteCall) Do(f func(context.Context, string) (domain.Quote, error)) *MockRepositoryGetLatestQuoteCall {
+func (c *MockRepositoryGetLatestQuoteCall) Do(f func(context.Context, domain.CurrencyPair) (domain.Quote, error)) *MockRepositoryGetLatestQuoteCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRepositoryGetLatestQuoteCall) DoAndReturn(f func(context.Context, string) (domain.Quote, error)) *MockRepositoryGetLatestQuoteCall {
+func (c *MockRepositoryGetLatestQuoteCall) DoAndReturn(f func(context.Context, domain.CurrencyPair) (domain.Quote, error)) *MockRepositoryGetLatestQuoteCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os/signal"
 	"syscall"
@@ -10,15 +11,16 @@ import (
 	"github.com/GlebHaik/currency-quotes/internal/config"
 )
 
-const configPath = "config/config.yaml"
-
 func main() {
-	if err := run(); err != nil {
+	configPath := flag.String("config", "config/config.yaml", "path to the YAML config")
+	flag.Parse()
+
+	if err := run(*configPath); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run() error {
+func run(configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -26,6 +28,5 @@ func run() error {
 	if err != nil {
 		return err
 	}
-
 	return app.Run(ctx, cfg)
 }

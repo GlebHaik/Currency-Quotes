@@ -221,18 +221,18 @@ func (m *MockRateProvider) EXPECT() *MockRateProviderMockRecorder {
 }
 
 // Rate mocks base method.
-func (m *MockRateProvider) Rate(ctx context.Context, base, quoteCurrency string) (domain.Rate, error) {
+func (m *MockRateProvider) Rate(ctx context.Context, pair domain.CurrencyPair) (domain.Rate, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Rate", ctx, base, quoteCurrency)
+	ret := m.ctrl.Call(m, "Rate", ctx, pair)
 	ret0, _ := ret[0].(domain.Rate)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Rate indicates an expected call of Rate.
-func (mr *MockRateProviderMockRecorder) Rate(ctx, base, quoteCurrency any) *MockRateProviderRateCall {
+func (mr *MockRateProviderMockRecorder) Rate(ctx, pair any) *MockRateProviderRateCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rate", reflect.TypeOf((*MockRateProvider)(nil).Rate), ctx, base, quoteCurrency)
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rate", reflect.TypeOf((*MockRateProvider)(nil).Rate), ctx, pair)
 	return &MockRateProviderRateCall{Call: call}
 }
 
@@ -248,13 +248,13 @@ func (c *MockRateProviderRateCall) Return(arg0 domain.Rate, arg1 error) *MockRat
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRateProviderRateCall) Do(f func(context.Context, string, string) (domain.Rate, error)) *MockRateProviderRateCall {
+func (c *MockRateProviderRateCall) Do(f func(context.Context, domain.CurrencyPair) (domain.Rate, error)) *MockRateProviderRateCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRateProviderRateCall) DoAndReturn(f func(context.Context, string, string) (domain.Rate, error)) *MockRateProviderRateCall {
+func (c *MockRateProviderRateCall) DoAndReturn(f func(context.Context, domain.CurrencyPair) (domain.Rate, error)) *MockRateProviderRateCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

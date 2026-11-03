@@ -24,12 +24,10 @@ import (
 	"github.com/GlebHaik/currency-quotes/internal/service"
 )
 
-const migrationsPath = "file://migrations"
-
-// Run applies migrations, builds every component and serves HTTP and background updates
-// until ctx is cancelled, then shuts both down gracefully.
+// Run applies migrations and serves HTTP and background updates until ctx is cancelled,
+// then shuts both down gracefully.
 func Run(ctx context.Context, cfg *config.Config) error {
-	if err := runMigrations(cfg.Database.URL); err != nil {
+	if err := runMigrations(cfg.Database); err != nil {
 		return err
 	}
 
@@ -57,6 +55,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		Workers:      cfg.Background.Workers,
 		PollInterval: cfg.Background.PollInterval,
 		BatchSize:    cfg.Background.BatchSize,
+		QueueSize:    cfg.Background.QueueSize,
 	})
 	svc := service.NewQuoteService(repo, bg)
 	srv := newHTTPServer(cfg.HTTP, handler.NewQuoteHandler(svc))
@@ -104,9 +103,9 @@ func newHTTPServer(cfg config.HTTPConfig, h *handler.QuoteHandler) *http.Server 
 	}
 }
 
-// requestTimeout gives every request a deadline, so a hung database call is cancelled instead of
-// holding a pool connection forever. Unlike chi's middleware.Timeout it writes nothing itself:
-// the handler sees context.DeadlineExceeded and answers 504 in the usual JSON error format.
+// requestTimeout puts a deadline on every request, so a hung database call is cancelled instead
+// of holding a pool connection. Unlike chi's middleware.Timeout it writes no response itself:
+// the handler sees context.DeadlineExceeded and answers 504 in the usual JSON format.
 func requestTimeout(d time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if d <= 0 {
@@ -120,10 +119,11 @@ func requestTimeout(d time.Duration) func(http.Handler) http.Handler {
 	}
 }
 
-func runMigrations(databaseURL string) error {
-	dsn := "pgx5://" + strings.TrimPrefix(strings.TrimPrefix(databaseURL, "postgres://"), "postgresql://")
+func runMigrations(cfg config.DatabaseConfig) error {
+	// golang-migrate picks its driver by URL scheme; pgx5:// is the pgx v5 one.
+	dsn := "pgx5://" + strings.TrimPrefix(strings.TrimPrefix(cfg.URL, "postgres://"), "postgresql://")
 
-	m, err := migrate.New(migrationsPath, dsn)
+	m, err := migrate.New("file://"+cfg.MigrationsDir, dsn)
 	if err != nil {
 		return fmt.Errorf("init migrations: %w", err)
 	}

@@ -16,13 +16,16 @@ import (
 
 var _ Repository = (*repository.QuoteRepository)(nil)
 
+var (
+	testNow = time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+	eurMXN  = domain.MustParseCurrencyPair("EUR/MXN")
+	eurUSD  = domain.MustParseCurrencyPair("EUR/USD")
+)
+
 type serviceMocks struct {
 	repo     *mocks.MockRepository
 	notifier *mocks.MockNotifier
 }
-
-// testNow is the fixed clock of every service and updater under test.
-var testNow = time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
 
 func newTestService(t *testing.T) (*QuoteService, serviceMocks) {
 	ctrl := gomock.NewController(t)
@@ -34,13 +37,12 @@ func newTestService(t *testing.T) (*QuoteService, serviceMocks) {
 
 func TestQuoteService_RequestUpdate(t *testing.T) {
 	key := uuid.New()
-	existing := domain.UpdateOperation{ID: uuid.New(), CurrencyPair: "EUR/MXN", Status: domain.StatusCompleted, IdempotencyKey: &key}
+	existing := domain.UpdateOperation{ID: uuid.New(), CurrencyPair: eurMXN, Status: domain.StatusCompleted, IdempotencyKey: &key}
 	errDB := errors.New("connection refused")
 
 	// inserted makes SaveUpdate behave like a fresh insert: it returns what it was given.
 	inserted := func(_ context.Context, u domain.UpdateOperation) (domain.UpdateOperation, error) { return u, nil }
-	// pending matches the operation the service must build for pair with the given key.
-	pending := func(pair string, key *uuid.UUID) gomock.Matcher {
+	pending := func(pair domain.CurrencyPair, key *uuid.UUID) gomock.Matcher {
 		return gomock.Cond(func(u domain.UpdateOperation) bool {
 			sameKey := (u.IdempotencyKey == nil && key == nil) ||
 				(u.IdempotencyKey != nil && key != nil && *u.IdempotencyKey == *key)
@@ -51,7 +53,7 @@ func TestQuoteService_RequestUpdate(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		pair  string
+		pair  domain.CurrencyPair
 		key   *uuid.UUID
 		setup func(m serviceMocks)
 		// wantExisting: the original update's ID comes back instead of a new one.
@@ -59,49 +61,43 @@ func TestQuoteService_RequestUpdate(t *testing.T) {
 		wantErr      error
 	}{
 		{
-			name: "new update without a key wakes the workers",
-			pair: "EUR/MXN",
+			name: "new update without a key wakes the updater",
+			pair: eurMXN,
 			setup: func(m serviceMocks) {
-				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending("EUR/MXN", nil)).DoAndReturn(inserted)
+				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurMXN, nil)).DoAndReturn(inserted)
 				m.notifier.EXPECT().Notify()
 			},
 		},
 		{
 			name: "new update with a key stores the key",
-			pair: "EUR/MXN",
+			pair: eurMXN,
 			key:  &key,
 			setup: func(m serviceMocks) {
-				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending("EUR/MXN", &key)).DoAndReturn(inserted)
+				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurMXN, &key)).DoAndReturn(inserted)
 				m.notifier.EXPECT().Notify()
 			},
 		},
 		{
 			name: "retry with the same key and pair returns the original update and wakes nobody",
-			pair: "EUR/MXN",
+			pair: eurMXN,
 			key:  &key,
 			setup: func(m serviceMocks) {
-				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending("EUR/MXN", &key)).Return(existing, nil)
+				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurMXN, &key)).Return(existing, nil)
 			},
 			wantExisting: true,
 		},
 		{
 			name: "same key with another pair is a conflict",
-			pair: "EUR/USD",
+			pair: eurUSD,
 			key:  &key,
 			setup: func(m serviceMocks) {
-				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending("EUR/USD", &key)).Return(existing, nil)
+				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurUSD, &key)).Return(existing, nil)
 			},
-			wantErr: ErrIdempotencyConflict,
-		},
-		{
-			name:    "invalid pair touches nothing",
-			pair:    "eur/mxn",
-			setup:   func(serviceMocks) {},
-			wantErr: ErrInvalidPair,
+			wantErr: domain.ErrIdempotencyConflict,
 		},
 		{
 			name: "storage error is returned and wakes nobody",
-			pair: "EUR/MXN",
+			pair: eurMXN,
 			setup: func(m serviceMocks) {
 				m.repo.EXPECT().SaveUpdate(gomock.Any(), gomock.Any()).Return(domain.UpdateOperation{}, errDB)
 			},
@@ -132,7 +128,7 @@ func TestQuoteService_RequestUpdate(t *testing.T) {
 }
 
 func TestQuoteService_GetUpdate(t *testing.T) {
-	op := domain.UpdateOperation{ID: uuid.New(), CurrencyPair: "EUR/MXN", Status: domain.StatusPending}
+	op := domain.UpdateOperation{ID: uuid.New(), CurrencyPair: eurMXN, Status: domain.StatusPending}
 
 	tests := []struct {
 		name    string
@@ -150,7 +146,7 @@ func TestQuoteService_GetUpdate(t *testing.T) {
 			setup: func(m serviceMocks) {
 				m.repo.EXPECT().GetUpdate(gomock.Any(), op.ID).Return(domain.UpdateOperation{}, domain.ErrNotFound)
 			},
-			wantErr: ErrNotFound,
+			wantErr: domain.ErrNotFound,
 		},
 	}
 	for _, tt := range tests {
@@ -167,34 +163,25 @@ func TestQuoteService_GetUpdate(t *testing.T) {
 }
 
 func TestQuoteService_GetLatestQuote(t *testing.T) {
-	quote := domain.Quote{CurrencyPair: "EUR/MXN", Price: "20.955000"}
+	quote := domain.Quote{CurrencyPair: eurMXN, Price: "20.955000"}
 
 	tests := []struct {
 		name    string
-		pair    string
 		setup   func(m serviceMocks)
 		want    domain.Quote
 		wantErr error
 	}{
 		{
 			name:  "found",
-			pair:  "EUR/MXN",
-			setup: func(m serviceMocks) { m.repo.EXPECT().GetLatestQuote(gomock.Any(), "EUR/MXN").Return(quote, nil) },
+			setup: func(m serviceMocks) { m.repo.EXPECT().GetLatestQuote(gomock.Any(), eurMXN).Return(quote, nil) },
 			want:  quote,
 		},
 		{
 			name: "not found",
-			pair: "EUR/MXN",
 			setup: func(m serviceMocks) {
-				m.repo.EXPECT().GetLatestQuote(gomock.Any(), "EUR/MXN").Return(domain.Quote{}, domain.ErrNotFound)
+				m.repo.EXPECT().GetLatestQuote(gomock.Any(), eurMXN).Return(domain.Quote{}, domain.ErrNotFound)
 			},
-			wantErr: ErrNotFound,
-		},
-		{
-			name:    "invalid pair never reaches the repository",
-			pair:    "EURMXN",
-			setup:   func(serviceMocks) {},
-			wantErr: ErrInvalidPair,
+			wantErr: domain.ErrNotFound,
 		},
 	}
 	for _, tt := range tests {
@@ -202,39 +189,9 @@ func TestQuoteService_GetLatestQuote(t *testing.T) {
 			s, m := newTestService(t)
 			tt.setup(m)
 
-			got, err := s.GetLatestQuote(context.Background(), tt.pair)
+			got, err := s.GetLatestQuote(context.Background(), eurMXN)
 			if !errors.Is(err, tt.wantErr) || got != tt.want {
 				t.Fatalf("got (%+v, %v), want (%+v, %v)", got, err, tt.want, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidatePair(t *testing.T) {
-	tests := []struct {
-		pair  string
-		valid bool
-	}{
-		{"EUR/MXN", true},
-		{"USD/JPY", true},
-		{"eur/mxn", false},
-		{"EURMXN", false},
-		{"EUR/MX", false},
-		{"EURO/MXN", false},
-		{"EUR/MXN/USD", false},
-		{"EUR/", false},
-		{"/MXN", false},
-		{"EUR/M1N", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.pair, func(t *testing.T) {
-			err := validatePair(tt.pair)
-			if tt.valid && err != nil {
-				t.Fatalf("%q must be valid, got %v", tt.pair, err)
-			}
-			if !tt.valid && !errors.Is(err, ErrInvalidPair) {
-				t.Fatalf("%q must be rejected with ErrInvalidPair, got %v", tt.pair, err)
 			}
 		})
 	}

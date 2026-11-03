@@ -23,7 +23,10 @@ var (
 	_ RateProvider = (*frankfurter.Client)(nil)
 )
 
-var testDate = time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+var (
+	testDate = time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	eurXXX   = domain.MustParseCurrencyPair("EUR/XXX")
+)
 
 type updaterMocks struct {
 	store    *mocks.MockUpdateStore
@@ -45,10 +48,10 @@ func (e retryAfterErr) Error() string             { return "rate limited (HTTP 4
 func (e retryAfterErr) RetryAfter() time.Duration { return time.Duration(e) }
 
 func TestQuoteUpdater_Claim(t *testing.T) {
-	op := func(pair string, attempts int) domain.UpdateOperation {
+	op := func(pair domain.CurrencyPair, attempts int) domain.UpdateOperation {
 		return domain.UpdateOperation{ID: uuid.New(), CurrencyPair: pair, Attempts: attempts}
 	}
-	mxn1, usd, mxn3, mxn2 := op("EUR/MXN", 1), op("EUR/USD", 1), op("EUR/MXN", 3), op("EUR/MXN", 2)
+	mxn1, usd, mxn3, mxn2 := op(eurMXN, 1), op(eurUSD, 1), op(eurMXN, 3), op(eurMXN, 2)
 	errDB := errors.New("connection refused")
 	const lease = 45 * time.Second
 
@@ -67,8 +70,8 @@ func TestQuoteUpdater_Claim(t *testing.T) {
 					Return([]domain.UpdateOperation{mxn1, usd, mxn3, mxn2}, nil)
 			},
 			want: []Batch{
-				{Pair: "EUR/MXN", IDs: []uuid.UUID{mxn1.ID, mxn3.ID, mxn2.ID}, Attempts: 3},
-				{Pair: "EUR/USD", IDs: []uuid.UUID{usd.ID}, Attempts: 1},
+				{Pair: eurMXN, IDs: []uuid.UUID{mxn1.ID, mxn3.ID, mxn2.ID}, Attempts: 3},
+				{Pair: eurUSD, IDs: []uuid.UUID{usd.ID}, Attempts: 1},
 			},
 		},
 		{
@@ -108,7 +111,7 @@ func TestQuoteUpdater_Process(t *testing.T) {
 	errDB := errors.New("connection refused")
 
 	savedQuote := gomock.Cond(func(q domain.Quote) bool {
-		return q.CurrencyPair == "EUR/MXN" && q.Price == "20.955" && q.SourceDate.Equal(testDate) && q.UpdatedAt.Equal(testNow)
+		return q.CurrencyPair == eurMXN && q.Price == "20.955" && q.SourceDate.Equal(testDate) && q.UpdatedAt.Equal(testNow)
 	})
 	delayIn := func(lo, hi time.Duration) gomock.Matcher {
 		return gomock.Cond(func(d time.Duration) bool { return d >= lo && d <= hi })
@@ -131,74 +134,67 @@ func TestQuoteUpdater_Process(t *testing.T) {
 	}{
 		{
 			name:  "price is saved for every update of the pair",
-			batch: Batch{Pair: "EUR/MXN", IDs: ids, Attempts: 1},
+			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 1},
 			setup: func(m updaterMocks, _ context.CancelFunc) {
-				m.provider.EXPECT().Rate(gomock.Any(), "EUR", "MXN").Return(domain.Rate{Price: "20.955", Date: testDate}, nil)
+				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).Return(domain.Rate{Price: "20.955", Date: testDate}, nil)
 				m.store.EXPECT().CompleteUpdates(gomock.Any(), ids, savedQuote).Return(nil)
 			},
 		},
 		{
 			name:  "permanent error fails the updates at once",
-			batch: Batch{Pair: "EUR/XXX", IDs: ids, Attempts: 1},
+			batch: Batch{Pair: eurXXX, IDs: ids, Attempts: 1},
 			setup: func(m updaterMocks, _ context.CancelFunc) {
-				m.provider.EXPECT().Rate(gomock.Any(), "EUR", "XXX").
+				m.provider.EXPECT().Rate(gomock.Any(), eurXXX).
 					Return(domain.Rate{}, fmt.Errorf("%w: invalid currency: XXX", domain.ErrPermanent))
 				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonHas("invalid currency: XXX")).Return(nil)
 			},
 		},
 		{
 			name:  "transient error is retried with a backoff within the first ceiling",
-			batch: Batch{Pair: "EUR/MXN", IDs: ids, Attempts: 1},
+			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 1},
 			setup: func(m updaterMocks, _ context.CancelFunc) {
-				m.provider.EXPECT().Rate(gomock.Any(), "EUR", "MXN").Return(domain.Rate{}, unavailable)
+				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).Return(domain.Rate{}, unavailable)
 				m.store.EXPECT().RetryLater(gomock.Any(), ids, delayIn(time.Nanosecond, time.Second)).Return(nil)
 			},
 		},
 		{
 			name:  "transient error on the last attempt fails the updates",
-			batch: Batch{Pair: "EUR/MXN", IDs: ids, Attempts: 3},
+			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 3},
 			setup: func(m updaterMocks, _ context.CancelFunc) {
-				m.provider.EXPECT().Rate(gomock.Any(), "EUR", "MXN").Return(domain.Rate{}, unavailable)
+				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).Return(domain.Rate{}, unavailable)
 				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonHas("503")).Return(nil)
 			},
 		},
 		{
 			name:  "Retry-After from the provider is respected",
-			batch: Batch{Pair: "EUR/MXN", IDs: ids, Attempts: 1},
+			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 1},
 			setup: func(m updaterMocks, _ context.CancelFunc) {
-				m.provider.EXPECT().Rate(gomock.Any(), "EUR", "MXN").
+				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).
 					Return(domain.Rate{}, fmt.Errorf("frankfurter: %w", retryAfterErr(30*time.Second)))
 				m.store.EXPECT().RetryLater(gomock.Any(), ids, delayIn(30*time.Second, time.Hour)).Return(nil)
 			},
 		},
 		{
-			name:  "malformed pair fails without calling the provider",
-			batch: Batch{Pair: "EURMXN", IDs: ids, Attempts: 1},
-			setup: func(m updaterMocks, _ context.CancelFunc) {
-				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonHas("malformed currency pair")).Return(nil)
-			},
-		},
-		{
 			name:  "store error is returned, so the caller can log it",
-			batch: Batch{Pair: "EUR/MXN", IDs: ids, Attempts: 1},
+			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 1},
 			setup: func(m updaterMocks, _ context.CancelFunc) {
-				m.provider.EXPECT().Rate(gomock.Any(), "EUR", "MXN").Return(domain.Rate{Price: "20.955", Date: testDate}, nil)
+				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).Return(domain.Rate{Price: "20.955", Date: testDate}, nil)
 				m.store.EXPECT().CompleteUpdates(gomock.Any(), ids, savedQuote).Return(errDB)
 			},
 			wantErr: errDB,
 		},
 		{
 			name:        "shutdown before start does nothing",
-			batch:       Batch{Pair: "EUR/MXN", IDs: ids, Attempts: 1},
+			batch:       Batch{Pair: eurMXN, IDs: ids, Attempts: 1},
 			cancelFirst: true,
 			setup:       func(updaterMocks, context.CancelFunc) {},
 		},
 		{
 			name:  "shutdown during the provider call writes nothing, so no attempt is wasted on a retry",
-			batch: Batch{Pair: "EUR/MXN", IDs: ids, Attempts: 1},
+			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 1},
 			setup: func(m updaterMocks, cancel context.CancelFunc) {
-				m.provider.EXPECT().Rate(gomock.Any(), "EUR", "MXN").
-					DoAndReturn(func(ctx context.Context, _, _ string) (domain.Rate, error) {
+				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).
+					DoAndReturn(func(ctx context.Context, _ domain.CurrencyPair) (domain.Rate, error) {
 						cancel()
 						return domain.Rate{}, ctx.Err()
 					})
@@ -206,10 +202,10 @@ func TestQuoteUpdater_Process(t *testing.T) {
 		},
 		{
 			name:  "price fetched right before shutdown is still saved",
-			batch: Batch{Pair: "EUR/MXN", IDs: ids, Attempts: 1},
+			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 1},
 			setup: func(m updaterMocks, cancel context.CancelFunc) {
-				m.provider.EXPECT().Rate(gomock.Any(), "EUR", "MXN").
-					DoAndReturn(func(context.Context, string, string) (domain.Rate, error) {
+				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).
+					DoAndReturn(func(context.Context, domain.CurrencyPair) (domain.Rate, error) {
 						cancel()
 						return domain.Rate{Price: "20.955", Date: testDate}, nil
 					})

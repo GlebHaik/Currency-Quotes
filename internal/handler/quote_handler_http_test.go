@@ -23,6 +23,8 @@ import (
 var _ QuoteService = (*service.QuoteService)(nil)
 
 var (
+	eurMXN     = domain.MustParseCurrencyPair("EUR/MXN")
+	eurUSD     = domain.MustParseCurrencyPair("EUR/USD")
 	updateID   = uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	updatedAt  = time.Date(2026, 10, 30, 8, 30, 0, 0, time.UTC)
 	sourceDay  = time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
@@ -94,7 +96,7 @@ func TestRequestQuoteUpdate(t *testing.T) {
 			name: "accepted without a key",
 			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, ""),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), "EUR/MXN", gomock.Nil()).Return(updateID, nil)
+				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, gomock.Nil()).Return(updateID, nil)
 			},
 			wantStatus: http.StatusAccepted,
 			wantBody:   accepted,
@@ -103,7 +105,7 @@ func TestRequestQuoteUpdate(t *testing.T) {
 			name: "key in upper case reaches the service normalised",
 			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, strings.ToUpper(key.String())),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), "EUR/MXN", isKey).Return(updateID, nil)
+				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, isKey).Return(updateID, nil)
 			},
 			wantStatus: http.StatusAccepted,
 			wantBody:   accepted,
@@ -121,28 +123,25 @@ func TestRequestQuoteUpdate(t *testing.T) {
 			wantBody:   `{"code":"INVALID_IDEMPOTENCY_KEY","message":"Idempotency-Key must be a UUID"}`,
 		},
 		{
-			name: "invalid pair",
-			req:  postUpdate(`{"currencyPair":"eur/mxn"}`, ""),
-			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), "eur/mxn", gomock.Nil()).Return(uuid.Nil, service.ErrInvalidPair)
-			},
+			name:       "invalid pair never reaches the service",
+			req:        postUpdate(`{"currencyPair":"eur/mxn"}`, ""),
 			wantStatus: http.StatusBadRequest,
-			wantBody:   `{"code":"INVALID_PAIR","message":"invalid currency pair"}`,
+			wantBody:   `{"code":"INVALID_PAIR","message":"Currency pair must look like EUR/MXN"}`,
 		},
 		{
 			name: "key reused for another pair",
 			req:  postUpdate(`{"currencyPair":"EUR/USD"}`, key.String()),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), "EUR/USD", isKey).Return(uuid.Nil, service.ErrIdempotencyConflict)
+				m.EXPECT().RequestUpdate(gomock.Any(), eurUSD, isKey).Return(uuid.Nil, domain.ErrIdempotencyConflict)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
-			wantBody:   `{"code":"IDEMPOTENCY_KEY_REUSED","message":"idempotency conflict"}`,
+			wantBody:   `{"code":"IDEMPOTENCY_KEY_REUSED","message":"Idempotency-Key was already used for another currency pair"}`,
 		},
 		{
 			name: "unexpected error does not leak details",
 			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, ""),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), "EUR/MXN", gomock.Nil()).Return(uuid.Nil, errUnknown)
+				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, gomock.Nil()).Return(uuid.Nil, errUnknown)
 			},
 			wantStatus: http.StatusInternalServerError,
 			wantBody:   `{"code":"INTERNAL_ERROR","message":"Internal server error"}`,
@@ -158,10 +157,10 @@ func getUpdate(id string) *http.Request {
 
 func TestGetQuoteUpdate(t *testing.T) {
 	op := func(status domain.UpdateStatus) domain.UpdateOperation {
-		return domain.UpdateOperation{ID: updateID, CurrencyPair: "EUR/MXN", Status: status}
+		return domain.UpdateOperation{ID: updateID, CurrencyPair: eurMXN, Status: status}
 	}
 	completed := op(domain.StatusCompleted)
-	completed.Quote = &domain.Quote{CurrencyPair: "EUR/MXN", Price: "20.955000", UpdatedAt: updatedAt, SourceDate: sourceDay}
+	completed.Quote = &domain.Quote{CurrencyPair: eurMXN, Price: "20.955000", UpdatedAt: updatedAt, SourceDate: sourceDay}
 	failed := op(domain.StatusFailed)
 	failed.Error = "frankfurter: invalid currency: XXX (HTTP 422)"
 
@@ -201,10 +200,10 @@ func TestGetQuoteUpdate(t *testing.T) {
 			name: "unknown ID",
 			req:  getUpdate(updateID.String()),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().GetUpdate(gomock.Any(), updateID).Return(domain.UpdateOperation{}, service.ErrNotFound)
+				m.EXPECT().GetUpdate(gomock.Any(), updateID).Return(domain.UpdateOperation{}, domain.ErrNotFound)
 			},
 			wantStatus: http.StatusNotFound,
-			wantBody:   `{"code":"NOT_FOUND","message":"not found"}`,
+			wantBody:   `{"code":"NOT_FOUND","message":"Not found"}`,
 		},
 	}, func(h *QuoteHandler) http.HandlerFunc { return h.GetQuoteUpdate })
 }
@@ -214,7 +213,7 @@ func getLatest(rawQuery string) *http.Request {
 }
 
 func TestGetLatestQuote(t *testing.T) {
-	quote := domain.Quote{CurrencyPair: "EUR/MXN", Price: "20.955000", UpdatedAt: updatedAt, SourceDate: sourceDay}
+	quote := domain.Quote{CurrencyPair: eurMXN, Price: "20.955000", UpdatedAt: updatedAt, SourceDate: sourceDay}
 	undated := quote
 	undated.SourceDate = time.Time{}
 
@@ -223,7 +222,7 @@ func TestGetLatestQuote(t *testing.T) {
 			name: "found, with the pair URL-encoded",
 			req:  getLatest("currencyPair=EUR%2FMXN"),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().GetLatestQuote(gomock.Any(), "EUR/MXN").Return(quote, nil)
+				m.EXPECT().GetLatestQuote(gomock.Any(), eurMXN).Return(quote, nil)
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   `{"currencyPair":"EUR/MXN","price":"20.955000","updatedAt":"2026-10-30T08:30:00Z","sourceDate":"2026-10-30"}`,
@@ -232,25 +231,22 @@ func TestGetLatestQuote(t *testing.T) {
 			name: "unknown source date is left out",
 			req:  getLatest("currencyPair=EUR%2FMXN"),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().GetLatestQuote(gomock.Any(), "EUR/MXN").Return(undated, nil)
+				m.EXPECT().GetLatestQuote(gomock.Any(), eurMXN).Return(undated, nil)
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   `{"currencyPair":"EUR/MXN","price":"20.955000","updatedAt":"2026-10-30T08:30:00Z"}`,
 		},
 		{
-			name: "missing pair is passed on and rejected",
-			req:  getLatest(""),
-			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().GetLatestQuote(gomock.Any(), "").Return(domain.Quote{}, service.ErrInvalidPair)
-			},
+			name:       "missing pair never reaches the service",
+			req:        getLatest(""),
 			wantStatus: http.StatusBadRequest,
-			wantBody:   `{"code":"INVALID_PAIR","message":"invalid currency pair"}`,
+			wantBody:   `{"code":"INVALID_PAIR","message":"Currency pair must look like EUR/MXN"}`,
 		},
 		{
 			name: "database too slow for the request deadline",
 			req:  getLatest("currencyPair=EUR%2FMXN"),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().GetLatestQuote(gomock.Any(), "EUR/MXN").
+				m.EXPECT().GetLatestQuote(gomock.Any(), eurMXN).
 					Return(domain.Quote{}, fmt.Errorf("get latest quote: %w", context.DeadlineExceeded))
 			},
 			wantStatus: http.StatusGatewayTimeout,
@@ -260,10 +256,10 @@ func TestGetLatestQuote(t *testing.T) {
 			name: "no quote yet",
 			req:  getLatest("currencyPair=EUR%2FMXN"),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().GetLatestQuote(gomock.Any(), "EUR/MXN").Return(domain.Quote{}, service.ErrNotFound)
+				m.EXPECT().GetLatestQuote(gomock.Any(), eurMXN).Return(domain.Quote{}, domain.ErrNotFound)
 			},
 			wantStatus: http.StatusNotFound,
-			wantBody:   `{"code":"NOT_FOUND","message":"not found"}`,
+			wantBody:   `{"code":"NOT_FOUND","message":"Not found"}`,
 		},
 	}, func(h *QuoteHandler) http.HandlerFunc { return h.GetLatestQuote })
 }

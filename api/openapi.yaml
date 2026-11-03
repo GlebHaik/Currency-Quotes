@@ -235,7 +235,7 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             code: IDEMPOTENCY_KEY_REUSED
-            message: idempotency conflict
+            message: Idempotency-Key was already used for another currency pair
     NotFound:
       description: Requested update or quote was not found
       content:

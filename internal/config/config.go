@@ -27,6 +27,8 @@ type HTTPConfig struct {
 type DatabaseConfig struct {
 	URL          string `yaml:"url" env:"DATABASE_URL"`
 	MaxOpenConns int    `yaml:"max_open_conns" env:"DATABASE_MAX_OPEN_CONNS"`
+	// MigrationsDir is relative to the working directory.
+	MigrationsDir string `yaml:"migrations_dir" env:"DATABASE_MIGRATIONS_DIR" env-default:"migrations"`
 }
 
 type ProviderConfig struct {
@@ -41,7 +43,7 @@ type UpdaterConfig struct {
 	MaxAttempts  int           `yaml:"max_attempts"`
 	RetryBackoff time.Duration `yaml:"retry_backoff"`
 	MaxBackoff   time.Duration `yaml:"max_backoff"`
-	// FinalizeTimeout bounds the DB write that records a result while the service shuts down.
+	// FinalizeTimeout bounds the write of a result that arrives during shutdown.
 	FinalizeTimeout time.Duration `yaml:"finalize_timeout"`
 }
 
@@ -49,6 +51,7 @@ type BackgroundConfig struct {
 	Workers      int           `yaml:"workers" env:"BACKGROUND_WORKERS"`
 	PollInterval time.Duration `yaml:"poll_interval"`
 	BatchSize    int           `yaml:"batch_size"`
+	QueueSize    int           `yaml:"queue_size"`
 }
 
 func Load(path string) (*Config, error) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GlebHaik/currency-quotes/internal/domain"
 	"github.com/GlebHaik/currency-quotes/internal/service"
 )
 
@@ -28,7 +29,7 @@ func (c *fakeClaimer) add(pairs ...string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, p := range pairs {
-		c.queue = append(c.queue, service.Batch{Pair: p})
+		c.queue = append(c.queue, service.Batch{Pair: domain.MustParseCurrencyPair(p)})
 	}
 }
 
@@ -124,14 +125,15 @@ func TestNotifyWakesDispatcherBeforeTick(t *testing.T) {
 }
 
 func TestClaimIsLimitedByFreeChannelSpace(t *testing.T) {
+	const queueSize = 16
 	claimer := &fakeClaimer{}
 	b := newBackground(claimer, done(func(context.Context, service.Batch) {}),
-		backgroundConfig{BatchSize: 1000, PollInterval: time.Hour})
+		backgroundConfig{BatchSize: 1000, QueueSize: queueSize, PollInterval: time.Hour})
 	startBackground(t, b)
 
 	waitFor(t, "first claim", func() bool { return claimer.firstLimit() >= 0 })
-	if got := claimer.firstLimit(); got != batchQueueSize {
-		t.Fatalf("an empty channel fits %d batches, but the claim asked for %d", batchQueueSize, got)
+	if got := claimer.firstLimit(); got != queueSize {
+		t.Fatalf("an empty channel fits %d batches, but the claim asked for %d", queueSize, got)
 	}
 }
 
@@ -144,7 +146,7 @@ func TestSendGivesUpOnCancel(t *testing.T) {
 	cancel()
 
 	res := make(chan bool, 1)
-	go func() { res <- b.send(ctx, service.Batch{Pair: "EUR/MXN"}) }()
+	go func() { res <- b.send(ctx, service.Batch{Pair: domain.MustParseCurrencyPair("EUR/MXN")}) }()
 	select {
 	case ok := <-res:
 		if ok {
@@ -177,7 +179,7 @@ func TestPanicDoesNotKillWorkers(t *testing.T) {
 	claimer.add("EUR/MXN", "EUR/USD")
 	var okDone atomic.Bool
 	b := newBackground(claimer, done(func(_ context.Context, batch service.Batch) {
-		if batch.Pair == "EUR/MXN" {
+		if batch.Pair.String() == "EUR/MXN" {
 			panic("boom")
 		}
 		okDone.Store(true)
@@ -192,7 +194,7 @@ func TestFailedBatchDoesNotStopWorker(t *testing.T) {
 	claimer.add("EUR/MXN", "EUR/USD")
 	var okDone atomic.Bool
 	b := newBackground(claimer, processorFunc(func(_ context.Context, batch service.Batch) error {
-		if batch.Pair == "EUR/MXN" {
+		if batch.Pair.String() == "EUR/MXN" {
 			return errors.New("complete updates of EUR/MXN: connection refused")
 		}
 		okDone.Store(true)

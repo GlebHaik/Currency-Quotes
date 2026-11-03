@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,7 +15,6 @@ import (
 
 //go:generate go tool mockgen -source=quote_updater.go -destination=mocks/quote_updater.go -package=mocks -typed -exclude_interfaces=retryAfterer
 
-// UpdateStore is the update queue in Postgres; *repository.QuoteRepository satisfies it.
 type UpdateStore interface {
 	ClaimPending(ctx context.Context, limit int, lease time.Duration) ([]domain.UpdateOperation, error)
 	CompleteUpdates(ctx context.Context, ids []uuid.UUID, q domain.Quote) error
@@ -24,31 +22,31 @@ type UpdateStore interface {
 	RetryLater(ctx context.Context, ids []uuid.UUID, delay time.Duration) error
 }
 
-// RateProvider is the external source of prices; *frankfurter.Client satisfies it.
 type RateProvider interface {
-	Rate(ctx context.Context, base, quoteCurrency string) (domain.Rate, error)
+	Rate(ctx context.Context, pair domain.CurrencyPair) (domain.Rate, error)
 }
 
-// retryAfterer is an error that carries the delay the provider asked for, such as a 429 Retry-After.
+// retryAfterer is an error carrying the delay the provider asked for, such as a 429 Retry-After.
 type retryAfterer interface {
 	RetryAfter() time.Duration
 }
 
 // Batch is one provider call: a currency pair and every pending update it will complete.
 type Batch struct {
-	Pair string
+	Pair domain.CurrencyPair
 	IDs  []uuid.UUID
 	// Attempts is the highest attempt count among IDs, including the current one.
 	Attempts int
 }
 
 type UpdaterConfig struct {
-	// LockTTL > channel wait + rate-limit wait + provider timeout, else the lease expires mid-flight and the update is claimed twice.
+	// LockTTL must exceed channel wait + rate-limit wait + provider timeout,
+	// or a lease expires mid-flight and the update is claimed twice.
 	LockTTL      time.Duration
 	MaxAttempts  int
 	RetryBackoff time.Duration
 	MaxBackoff   time.Duration
-	// FinalizeTimeout bounds the DB write that records a result while the service shuts down.
+	// FinalizeTimeout bounds the write of a result that arrives during shutdown.
 	FinalizeTimeout time.Duration
 }
 
@@ -71,19 +69,17 @@ func (c UpdaterConfig) withDefaults() UpdaterConfig {
 	return c
 }
 
-// QuoteUpdater does the background part of a refresh: it leases pending updates,
-// asks the provider for the price and records the outcome. It knows nothing about
-// goroutines or channels; the caller decides when and how concurrently to run it.
+// QuoteUpdater is the background half of a refresh: claim pending updates, fetch prices,
+// record outcomes. Goroutines and channels are the caller's business.
 type QuoteUpdater struct {
 	store    UpdateStore
 	provider RateProvider
 	cfg      UpdaterConfig
 	log      *slog.Logger
-	// now is the clock for UpdatedAt; tests replace it to get exact times.
-	now func() time.Time
+	now      func() time.Time // replaced in tests
 }
 
-// NewQuoteUpdater builds an updater; a nil log means slog.Default().
+// NewQuoteUpdater uses slog.Default() when log is nil.
 func NewQuoteUpdater(store UpdateStore, provider RateProvider, cfg UpdaterConfig, log *slog.Logger) *QuoteUpdater {
 	if log == nil {
 		log = slog.Default()
@@ -91,8 +87,8 @@ func NewQuoteUpdater(store UpdateStore, provider RateProvider, cfg UpdaterConfig
 	return &QuoteUpdater{store: store, provider: provider, cfg: cfg.withDefaults(), log: log, now: time.Now}
 }
 
-// Claim leases up to limit pending updates and groups them by pair,
-// so every pair costs one provider call however many updates wait for it.
+// Claim leases up to limit pending updates and groups them by pair:
+// one provider call per pair, however many updates wait for it.
 func (u *QuoteUpdater) Claim(ctx context.Context, limit int) ([]Batch, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -106,7 +102,7 @@ func (u *QuoteUpdater) Claim(ctx context.Context, limit int) ([]Batch, error) {
 
 func groupByPair(updates []domain.UpdateOperation) []Batch {
 	batches := make([]Batch, 0, len(updates))
-	pairs := make(map[string]int)
+	pairs := make(map[domain.CurrencyPair]int)
 	for _, u := range updates {
 		i, ok := pairs[u.CurrencyPair]
 		if !ok {
@@ -120,28 +116,24 @@ func groupByPair(updates []domain.UpdateOperation) []Batch {
 	return batches
 }
 
-// Process fetches the price for b and records the outcome: completed, failed for good, or retried later.
-// A provider failure is an outcome, not an error: Process returns an error only when the outcome
-// could not be recorded, and the updates then return to the queue when their lease expires.
+// Process fetches the price for b and records the outcome: completed, failed, or retried later.
+// A provider failure is an outcome, not an error. The returned error means the outcome could not
+// be recorded; the updates then return to the queue when their lease expires.
 func (u *QuoteUpdater) Process(ctx context.Context, b Batch) error {
 	if ctx.Err() != nil {
 		return nil
 	}
 
-	base, quoteCurrency, ok := strings.Cut(b.Pair, "/")
-	if !ok {
-		return u.finish(ctx, b, domain.Rate{}, fmt.Errorf("%w: malformed currency pair %q", domain.ErrPermanent, b.Pair))
-	}
-
-	rate, err := u.provider.Rate(ctx, base, quoteCurrency)
+	rate, err := u.provider.Rate(ctx, b.Pair)
 	if err != nil && ctx.Err() != nil {
-		// Cut short by shutdown, not by the provider: leave the updates leased and record nothing.
+		// Cut short by shutdown, not by the provider: record nothing, so no attempt is wasted.
 		return nil
 	}
 	return u.finish(ctx, b, rate, err)
 }
 
 func (u *QuoteUpdater) finish(ctx context.Context, b Batch, rate domain.Rate, err error) error {
+	// Detached from ctx: a price fetched just before shutdown is still saved.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), u.cfg.FinalizeTimeout)
 	defer cancel()
 
@@ -157,7 +149,7 @@ func (u *QuoteUpdater) finish(ctx context.Context, b Batch, rate domain.Rate, er
 		}
 	default:
 		delay := u.backoff(b.Attempts, err)
-		u.log.Warn("provider call failed, retrying", "pair", b.Pair, "attempt", b.Attempts, "in", delay, "err", err)
+		u.log.Warn("provider call failed, retrying", "pair", b.Pair.String(), "attempt", b.Attempts, "in", delay, "err", err)
 		if err := u.store.RetryLater(ctx, b.IDs, delay); err != nil {
 			return fmt.Errorf("retry updates of %s: %w", b.Pair, err)
 		}
@@ -165,12 +157,13 @@ func (u *QuoteUpdater) finish(ctx context.Context, b Batch, rate domain.Rate, er
 	return nil
 }
 
-// attempt starts at 1
+// backoff is exponential with jitter, capped at MaxBackoff, and never shorter than the
+// provider's Retry-After. attempt starts at 1.
 func (u *QuoteUpdater) backoff(attempt int, err error) time.Duration {
 	ceiling := u.cfg.MaxBackoff
 	attempt = max(1, attempt)
 
-	if attempt <= 62 {
+	if attempt <= 62 { // a longer shift overflows int64
 		factor := int64(1) << (attempt - 1)
 		if int64(u.cfg.MaxBackoff)/factor >= int64(u.cfg.RetryBackoff) {
 			ceiling = time.Duration(factor) * u.cfg.RetryBackoff
@@ -187,6 +180,7 @@ func (u *QuoteUpdater) backoff(attempt int, err error) time.Duration {
 	return delay
 }
 
+// jitter returns a random delay in [max/2, max), so retries of many updates spread out.
 func jitter(max time.Duration) time.Duration {
 	if max < 2 {
 		return max

@@ -31,7 +31,7 @@ func TestClient(t *testing.T) {
 	c := New(Config{BaseURL: srv.URL + "/", Timeout: time.Second})
 	ctx := context.Background()
 
-	rate, err := c.Rate(ctx, "EUR", "MXN")
+	rate, err := c.Rate(ctx, domain.MustParseCurrencyPair("EUR/MXN"))
 	if err != nil || rate.Price != "20.955000000000001" {
 		t.Fatalf("price %q, err %v: the number must not go through float64", rate.Price, err)
 	}
@@ -39,24 +39,25 @@ func TestClient(t *testing.T) {
 		t.Fatalf("date %v, want %v", rate.Date, want)
 	}
 
-	_, err = c.Rate(ctx, "EUR", "XXX")
+	_, err = c.Rate(ctx, domain.MustParseCurrencyPair("EUR/XXX"))
 	var ferr *Error
 	if !errors.Is(err, domain.ErrPermanent) || !errors.As(err, &ferr) || ferr.Message != "invalid currency: XXX" {
 		t.Fatalf("422 must be permanent with the provider message, got %v", err)
 	}
 
-	_, err = c.Rate(ctx, "EUR", "USD")
+	_, err = c.Rate(ctx, domain.MustParseCurrencyPair("EUR/USD"))
 	if errors.Is(err, domain.ErrPermanent) || !errors.As(err, &ferr) || ferr.RetryAfter() != 7*time.Second {
 		t.Fatalf("429 must be retryable with Retry-After, got %v", err)
 	}
 
-	_, err = c.Rate(ctx, "EUR", "GBP")
+	_, err = c.Rate(ctx, domain.MustParseCurrencyPair("EUR/GBP"))
 	if err == nil || errors.Is(err, domain.ErrPermanent) {
 		t.Fatalf("5xx must be retryable, got %v", err)
 	}
 }
 
 func TestClientRateLimitIsShared(t *testing.T) {
+	eurUSD := domain.MustParseCurrencyPair("EUR/USD")
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -70,7 +71,7 @@ func TestClientRateLimitIsShared(t *testing.T) {
 	for range 4 { // like 4 workers sharing one client
 		go func() {
 			for range 3 {
-				_, _ = c.Rate(context.Background(), "EUR", "USD")
+				_, _ = c.Rate(context.Background(), eurUSD)
 			}
 			done <- struct{}{}
 		}()
@@ -85,7 +86,7 @@ func TestClientRateLimitIsShared(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.Rate(ctx, "EUR", "USD"); err == nil {
+	if _, err := c.Rate(ctx, domain.MustParseCurrencyPair("EUR/USD")); err == nil {
 		t.Fatal("waiting for a token must stop when ctx is cancelled")
 	}
 }

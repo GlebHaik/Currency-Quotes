@@ -43,7 +43,7 @@ func (m *MockQuoteService) EXPECT() *MockQuoteServiceMockRecorder {
 }
 
 // GetLatestQuote mocks base method.
-func (m *MockQuoteService) GetLatestQuote(ctx context.Context, pair string) (domain.Quote, error) {
+func (m *MockQuoteService) GetLatestQuote(ctx context.Context, pair domain.CurrencyPair) (domain.Quote, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetLatestQuote", ctx, pair)
 	ret0, _ := ret[0].(domain.Quote)
@@ -70,13 +70,13 @@ func (c *MockQuoteServiceGetLatestQuoteCall) Return(arg0 domain.Quote, arg1 erro
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockQuoteServiceGetLatestQuoteCall) Do(f func(context.Context, string) (domain.Quote, error)) *MockQuoteServiceGetLatestQuoteCall {
+func (c *MockQuoteServiceGetLatestQuoteCall) Do(f func(context.Context, domain.CurrencyPair) (domain.Quote, error)) *MockQuoteServiceGetLatestQuoteCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockQuoteServiceGetLatestQuoteCall) DoAndReturn(f func(context.Context, string) (domain.Quote, error)) *MockQuoteServiceGetLatestQuoteCall {
+func (c *MockQuoteServiceGetLatestQuoteCall) DoAndReturn(f func(context.Context, domain.CurrencyPair) (domain.Quote, error)) *MockQuoteServiceGetLatestQuoteCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
@@ -121,7 +121,7 @@ func (c *MockQuoteServiceGetUpdateCall) DoAndReturn(f func(context.Context, uuid
 }
 
 // RequestUpdate mocks base method.
-func (m *MockQuoteService) RequestUpdate(ctx context.Context, pair string, idempotencyKey *uuid.UUID) (uuid.UUID, error) {
+func (m *MockQuoteService) RequestUpdate(ctx context.Context, pair domain.CurrencyPair, idempotencyKey *uuid.UUID) (uuid.UUID, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RequestUpdate", ctx, pair, idempotencyKey)
 	ret0, _ := ret[0].(uuid.UUID)
@@ -148,13 +148,13 @@ func (c *MockQuoteServiceRequestUpdateCall) Return(arg0 uuid.UUID, arg1 error) *
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockQuoteServiceRequestUpdateCall) Do(f func(context.Context, string, *uuid.UUID) (uuid.UUID, error)) *MockQuoteServiceRequestUpdateCall {
+func (c *MockQuoteServiceRequestUpdateCall) Do(f func(context.Context, domain.CurrencyPair, *uuid.UUID) (uuid.UUID, error)) *MockQuoteServiceRequestUpdateCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockQuoteServiceRequestUpdateCall) DoAndReturn(f func(context.Context, string, *uuid.UUID) (uuid.UUID, error)) *MockQuoteServiceRequestUpdateCall {
+func (c *MockQuoteServiceRequestUpdateCall) DoAndReturn(f func(context.Context, domain.CurrencyPair, *uuid.UUID) (uuid.UUID, error)) *MockQuoteServiceRequestUpdateCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

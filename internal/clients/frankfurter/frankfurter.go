@@ -18,6 +18,9 @@ import (
 	"github.com/GlebHaik/currency-quotes/internal/domain"
 )
 
+// maxBodySize caps how much of a response is read, so a broken provider can't exhaust memory.
+const maxBodySize = 1 << 20
+
 type Config struct {
 	BaseURL string
 	Timeout time.Duration
@@ -26,8 +29,8 @@ type Config struct {
 	Burst int
 }
 
-// Client calls GET /v2/rate/{base}/{quote}. One Client is shared by all workers,
-// so its limiter caps the total RPS the external API sees.
+// Client calls GET /v2/rate/{base}/{quote}. Share one Client between all workers:
+// its limiter then caps the total RPS the API sees.
 type Client struct {
 	baseURL string
 	http    *http.Client
@@ -46,15 +49,13 @@ func New(cfg Config) *Client {
 	}
 }
 
-// Rate returns the current price of base in quoteCurrency. It waits for the rate limiter first,
-// so a cancelled ctx stops it both while waiting and during the request.
-func (c *Client) Rate(ctx context.Context, base, quoteCurrency string) (domain.Rate, error) {
+func (c *Client) Rate(ctx context.Context, pair domain.CurrencyPair) (domain.Rate, error) {
 	if err := c.limiter.Wait(ctx); err != nil {
 		return domain.Rate{}, fmt.Errorf("frankfurter: rate limit: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("%s/v2/rate/%s/%s", c.baseURL,
-		url.PathEscape(strings.ToLower(base)), url.PathEscape(strings.ToLower(quoteCurrency)))
+		url.PathEscape(strings.ToLower(pair.BaseCurrency())), url.PathEscape(strings.ToLower(pair.QuoteCurrency())))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -66,7 +67,7 @@ func (c *Client) Rate(ctx context.Context, base, quoteCurrency string) (domain.R
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return domain.Rate{}, fmt.Errorf("frankfurter: read body: %w", err)
 	}
@@ -80,7 +81,7 @@ func (c *Client) Rate(ctx context.Context, base, quoteCurrency string) (domain.R
 		Rate json.Number `json:"rate"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
-	// UseNumber keeps "20.955" as text instead of rounding it through float64.
+	// UseNumber keeps "20.955" as text
 	dec.UseNumber()
 	if err := dec.Decode(&payload); err != nil || payload.Rate == "" {
 		return domain.Rate{}, fmt.Errorf("frankfurter: unexpected body %q", body)
@@ -92,8 +93,8 @@ func (c *Client) Rate(ctx context.Context, base, quoteCurrency string) (domain.R
 	return domain.Rate{Price: payload.Rate.String(), Date: date}, nil
 }
 
-// Error is a non-200 answer from the API. It matches domain.ErrPermanent when retrying won't help,
-// and reports the provider's Retry-After, so callers need neither this type nor HTTP details.
+// Error is a non-200 answer. Callers need neither this type nor HTTP details: it matches
+// domain.ErrPermanent when retrying won't help, and exposes Retry-After through RetryAfter.
 type Error struct {
 	StatusCode int
 	Message    string
@@ -109,7 +110,6 @@ func (e *Error) Is(target error) bool {
 	return target == domain.ErrPermanent && e.Permanent
 }
 
-// RetryAfter is the delay the provider asked for (429 Retry-After), zero if none.
 func (e *Error) RetryAfter() time.Duration {
 	return e.retryAfter
 }
@@ -130,9 +130,8 @@ func newError(resp *http.Response, body []byte) *Error {
 			e.retryAfter = time.Duration(secs) * time.Second
 		}
 	case resp.StatusCode >= 500:
-		// Provider-side trouble: retry.
 	default:
-		// Other 4xx (422 invalid currency, 404): the same request will fail again.
+		// Other 4xx, such as 422 for an unknown currency: the same request would fail again.
 		e.Permanent = true
 	}
 	return e

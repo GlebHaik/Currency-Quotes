@@ -15,11 +15,10 @@ const (
 )
 
 type UpdateOperation struct {
-	ID           uuid.UUID
-	CurrencyPair string
-	Status       UpdateStatus
-	Quote        *Quote
-	// IdempotencyKey is the client's Idempotency-Key; nil when the request had none.
+	ID             uuid.UUID
+	CurrencyPair   CurrencyPair
+	Status         UpdateStatus
+	Quote          *Quote
 	IdempotencyKey *uuid.UUID
 	Error          string
 	CreatedAt      time.Time
