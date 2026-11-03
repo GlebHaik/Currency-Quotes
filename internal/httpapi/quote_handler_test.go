@@ -1,4 +1,4 @@
-package handler
+package httpapi
 
 import (
 	"strings"
@@ -13,12 +13,12 @@ func TestParseIdempotencyKey(t *testing.T) {
 	tests := []struct {
 		name    string
 		header  string
-		want    *uuid.UUID
+		want    uuid.UUID
 		wantErr bool
 	}{
-		{name: "absent", header: "", want: nil},
-		{name: "valid", header: key, want: ptr(uuid.MustParse(key))},
-		{name: "upper case is the same key", header: strings.ToUpper(key), want: ptr(uuid.MustParse(key))},
+		{name: "absent", header: "", wantErr: true},
+		{name: "valid", header: key, want: uuid.MustParse(key)},
+		{name: "upper case is the same key", header: strings.ToUpper(key), want: uuid.MustParse(key)},
 		{name: "not a uuid", header: "key-1", wantErr: true},
 		{name: "nil uuid", header: uuid.Nil.String(), wantErr: true},
 	}
@@ -28,11 +28,9 @@ func TestParseIdempotencyKey(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
-			if (got == nil) != (tt.want == nil) || (got != nil && *got != *tt.want) {
+			if got != tt.want {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
-
-func ptr[T any](v T) *T { return &v }

@@ -19,7 +19,7 @@ type UpdateOperation struct {
 	CurrencyPair   CurrencyPair
 	Status         UpdateStatus
 	Quote          *Quote
-	IdempotencyKey *uuid.UUID
+	IdempotencyKey uuid.UUID
 	Error          string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time

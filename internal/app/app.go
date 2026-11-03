@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -18,15 +16,15 @@ import (
 
 	"github.com/GlebHaik/currency-quotes/internal/clients/frankfurter"
 	"github.com/GlebHaik/currency-quotes/internal/config"
-	"github.com/GlebHaik/currency-quotes/internal/handler"
+	"github.com/GlebHaik/currency-quotes/internal/httpapi"
 	"github.com/GlebHaik/currency-quotes/internal/repository"
 	"github.com/GlebHaik/currency-quotes/internal/service"
 )
 
 // Run applies migrations and serves HTTP and background updates until ctx is cancelled,
 // then shuts both down gracefully.
-func Run(ctx context.Context, cfg *config.Config) error {
-	if err := runMigrations(cfg.Database); err != nil {
+func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	if err := runMigrations(cfg.Database, log); err != nil {
 		return err
 	}
 
@@ -49,26 +47,26 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		RetryBackoff:    cfg.Updater.RetryBackoff,
 		MaxBackoff:      cfg.Updater.MaxBackoff,
 		FinalizeTimeout: cfg.Updater.FinalizeTimeout,
-	}, slog.Default())
+	}, log)
 	bg := newBackground(updater, updater, backgroundConfig{
 		Workers:      cfg.Background.Workers,
 		PollInterval: cfg.Background.PollInterval,
 		BatchSize:    cfg.Background.BatchSize,
 		QueueSize:    cfg.Background.QueueSize,
-	})
+	}, log)
 	svc := service.NewQuoteService(repo, bg)
-	srv := newHTTPServer(cfg.HTTP, handler.NewQuoteHandler(svc))
+	srv := newHTTPServer(cfg.HTTP, httpapi.NewRouter(svc, log, cfg.HTTP.RequestTimeout))
 
 	g, gctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
 		bg.Run(gctx)
-		slog.Info("background processing stopped")
+		log.Info("background processing stopped")
 		return nil
 	})
 
 	g.Go(func() error {
-		slog.Info("http server started", "addr", srv.Addr, "workers", cfg.Background.Workers,
+		log.Info("http server started", "addr", srv.Addr, "workers", cfg.Background.Workers,
 			"provider", cfg.Provider.BaseURL, "provider_rps", cfg.Provider.RPS)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("http server: %w", err)
@@ -78,44 +76,29 @@ func Run(ctx context.Context, cfg *config.Config) error {
 
 	g.Go(func() error {
 		<-gctx.Done()
-		slog.Info("shutting down")
+		log.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.HTTP.ShutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("http shutdown: %w", err)
 		}
-		slog.Info("http server stopped")
+		log.Info("http server stopped")
 		return nil
 	})
 
 	return g.Wait()
 }
 
-func newHTTPServer(cfg config.HTTPConfig, h *handler.QuoteHandler) *http.Server {
+func newHTTPServer(cfg config.HTTPConfig, h http.Handler) *http.Server {
 	return &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      newRouter(cfg, h),
+		Handler:      h,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 	}
 }
 
-func newRouter(cfg config.HTTPConfig, h *handler.QuoteHandler) chi.Router {
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(accessLog) // outside Recoverer, so a panic is logged with its 500
-	r.Use(handler.Recoverer)
-	r.Use(requestTimeout(cfg.RequestTimeout))
-	r.NotFound(handler.NotFound)
-	r.MethodNotAllowed(allowMethods(r, handler.MethodNotAllowed))
-
-	r.Post("/api/v1/quotes/updates", h.RequestQuoteUpdate)
-	r.Get("/api/v1/quotes/updates/{updateId}", h.GetQuoteUpdate)
-	r.Get("/api/v1/quotes/latest", h.GetLatestQuote)
-	return r
-}
-
-func runMigrations(cfg config.DatabaseConfig) error {
+func runMigrations(cfg config.DatabaseConfig, log *slog.Logger) error {
 	// golang-migrate picks its driver by URL scheme; pgx5:// is the pgx v5 one.
 	dsn := "pgx5://" + strings.TrimPrefix(strings.TrimPrefix(cfg.URL, "postgres://"), "postgresql://")
 
@@ -129,7 +112,7 @@ func runMigrations(cfg config.DatabaseConfig) error {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	version, _, _ := m.Version()
-	slog.Info("migrations applied", "version", version)
+	log.Info("migrations applied", "version", version)
 	return nil
 }
 

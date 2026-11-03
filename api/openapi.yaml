@@ -5,6 +5,9 @@ info:
   description: |
     Asynchronous currency quote refresh service.
     Clients request a refresh and poll its status using the returned update ID.
+
+    Every response carries an `X-Request-Id` header (the client's own value, if it sent one);
+    server logs carry the same ID.
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -17,11 +20,11 @@ paths:
       parameters:
         - name: Idempotency-Key
           in: header
-          required: false
+          required: true
           description: |
-            Client-generated UUID that makes retries safe.
+            Client-generated UUID that makes retries safe; one per logical request, reused on retries.
             A retry with the same key and pair returns the original updateId and starts no new refresh.
-            A value that is not a UUID is rejected with 400.
+            A missing header or a value that is not a UUID is rejected with 400.
           schema:
             type: string
             format: uuid
@@ -218,10 +221,10 @@ components:
       properties:
         code:
           type: string
-          example: QUOTE_NOT_FOUND
+          example: NOT_FOUND
         message:
           type: string
-          example: No quote is available for the requested currency pair
+          example: Not found
   responses:
     BadRequest:
       description: Invalid request parameters or body

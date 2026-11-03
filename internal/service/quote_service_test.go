@@ -37,67 +37,58 @@ func newTestService(t *testing.T) (*QuoteService, serviceMocks) {
 
 func TestQuoteService_RequestUpdate(t *testing.T) {
 	key := uuid.New()
-	existing := domain.UpdateOperation{ID: uuid.New(), CurrencyPair: eurMXN, Status: domain.StatusCompleted, IdempotencyKey: &key}
+	existing := domain.UpdateOperation{ID: uuid.New(), CurrencyPair: eurMXN, Status: domain.StatusCompleted, IdempotencyKey: key}
 	errDB := errors.New("connection refused")
 
 	// inserted makes SaveUpdate behave like a fresh insert: it returns what it was given.
 	inserted := func(_ context.Context, u domain.UpdateOperation) (domain.UpdateOperation, error) { return u, nil }
-	pending := func(pair domain.CurrencyPair, key *uuid.UUID) gomock.Matcher {
+	pending := func(pair domain.CurrencyPair, key uuid.UUID) gomock.Matcher {
 		return gomock.Cond(func(u domain.UpdateOperation) bool {
-			sameKey := (u.IdempotencyKey == nil && key == nil) ||
-				(u.IdempotencyKey != nil && key != nil && *u.IdempotencyKey == *key)
 			return u.ID != uuid.Nil && u.CurrencyPair == pair && u.Status == domain.StatusPending &&
-				u.CreatedAt.Equal(testNow) && sameKey
+				u.CreatedAt.Equal(testNow) && u.IdempotencyKey == key
 		})
 	}
 
 	tests := []struct {
 		name  string
 		pair  domain.CurrencyPair
-		key   *uuid.UUID
+		key   uuid.UUID
 		setup func(m serviceMocks)
 		// wantExisting: the original update's ID comes back instead of a new one.
 		wantExisting bool
 		wantErr      error
 	}{
 		{
-			name: "new update without a key wakes the updater",
+			name: "new update stores the key and wakes the updater",
 			pair: eurMXN,
+			key:  key,
 			setup: func(m serviceMocks) {
-				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurMXN, nil)).DoAndReturn(inserted)
-				m.notifier.EXPECT().Notify()
-			},
-		},
-		{
-			name: "new update with a key stores the key",
-			pair: eurMXN,
-			key:  &key,
-			setup: func(m serviceMocks) {
-				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurMXN, &key)).DoAndReturn(inserted)
+				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurMXN, key)).DoAndReturn(inserted)
 				m.notifier.EXPECT().Notify()
 			},
 		},
 		{
 			name: "retry with the same key and pair returns the original update and wakes nobody",
 			pair: eurMXN,
-			key:  &key,
+			key:  key,
 			setup: func(m serviceMocks) {
-				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurMXN, &key)).Return(existing, nil)
+				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurMXN, key)).Return(existing, nil)
 			},
 			wantExisting: true,
 		},
 		{
 			name: "same key with another pair is a conflict",
 			pair: eurUSD,
-			key:  &key,
+			key:  key,
 			setup: func(m serviceMocks) {
-				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurUSD, &key)).Return(existing, nil)
+				m.repo.EXPECT().SaveUpdate(gomock.Any(), pending(eurUSD, key)).Return(existing, nil)
 			},
 			wantErr: domain.ErrIdempotencyConflict,
 		},
 		{
 			name: "storage error is returned and wakes nobody",
 			pair: eurMXN,
+			key:  uuid.New(),
 			setup: func(m serviceMocks) {
 				m.repo.EXPECT().SaveUpdate(gomock.Any(), gomock.Any()).Return(domain.UpdateOperation{}, errDB)
 			},

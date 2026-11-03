@@ -1,4 +1,4 @@
-package handler
+package httpapi
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/GlebHaik/currency-quotes/internal/domain"
-	"github.com/GlebHaik/currency-quotes/internal/handler/mocks"
+	"github.com/GlebHaik/currency-quotes/internal/httpapi/mocks"
 	"github.com/GlebHaik/currency-quotes/internal/service"
 )
 
@@ -43,7 +43,7 @@ type httpCase struct {
 
 // run serves each case through route with a fresh mock and checks the status, headers and body.
 // Any service call a case did not expect fails it through the gomock controller.
-func run(t *testing.T, cases []httpCase, route func(h *QuoteHandler) http.HandlerFunc) {
+func run(t *testing.T, cases []httpCase, route func(h *quoteHandler) http.HandlerFunc) {
 	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,7 +53,7 @@ func run(t *testing.T, cases []httpCase, route func(h *QuoteHandler) http.Handle
 			}
 			rec := httptest.NewRecorder()
 
-			route(NewQuoteHandler(m)).ServeHTTP(rec, tc.req)
+			route(newQuoteHandler(m, discard)).ServeHTTP(rec, tc.req)
 
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status %d, want %d; body %s", rec.Code, tc.wantStatus, rec.Body)
@@ -101,15 +101,16 @@ func postUpdate(body, key string) *http.Request {
 
 func TestRequestQuoteUpdate(t *testing.T) {
 	key := uuid.MustParse("8e3b1c2a-4f5d-4e6a-9b7c-1d2e3f4a5b6c")
-	isKey := gomock.Cond(func(k *uuid.UUID) bool { return k != nil && *k == key })
+	k := key.String()
 	accepted := `{"status":"pending","updateId":"550e8400-e29b-41d4-a716-446655440000"}`
+	badKey := `{"code":"INVALID_IDEMPOTENCY_KEY","message":"Idempotency-Key header is required and must be a UUID"}`
 
 	run(t, []httpCase{
 		{
-			name: "accepted without a key",
-			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, ""),
+			name: "accepted",
+			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, k),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, gomock.Nil()).Return(updateID, nil)
+				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, key).Return(updateID, nil)
 			},
 			wantStatus:  http.StatusAccepted,
 			wantBody:    accepted,
@@ -117,71 +118,77 @@ func TestRequestQuoteUpdate(t *testing.T) {
 		},
 		{
 			name: "key in upper case reaches the service normalised",
-			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, strings.ToUpper(key.String())),
+			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, strings.ToUpper(k)),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, isKey).Return(updateID, nil)
+				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, key).Return(updateID, nil)
 			},
 			wantStatus: http.StatusAccepted,
 			wantBody:   accepted,
 		},
 		{
-			name:       "malformed JSON",
-			req:        postUpdate(`{"currencyPair":`, ""),
+			name:       "missing key never reaches the service",
+			req:        postUpdate(`{"currencyPair":"EUR/MXN"}`, ""),
 			wantStatus: http.StatusBadRequest,
-			wantBody:   `{"code":"INVALID_BODY","message":"Invalid JSON body"}`,
-		},
-		{
-			name:       "unknown field, as the spec forbids additional properties",
-			req:        postUpdate(`{"currencyPair":"EUR/MXN","pair":"EUR/USD"}`, ""),
-			wantStatus: http.StatusBadRequest,
-			wantBody:   `{"code":"INVALID_BODY","message":"Invalid JSON body"}`,
-		},
-		{
-			name:       "body over the limit is not read to the end",
-			req:        postUpdate(`{"currencyPair":"`+strings.Repeat("A", maxBodyBytes)+`"}`, ""),
-			wantStatus: http.StatusRequestEntityTooLarge,
-			wantBody:   `{"code":"BODY_TOO_LARGE","message":"Request body is too large"}`,
-		},
-		{
-			name: "client gone: no body and no error",
-			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, ""),
-			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, gomock.Nil()).
-					Return(uuid.Nil, fmt.Errorf("save update: %w", context.Canceled))
-			},
-			wantStatus: statusClientClosedRequest,
+			wantBody:   badKey,
 		},
 		{
 			name:       "key that is not a UUID",
 			req:        postUpdate(`{"currencyPair":"EUR/MXN"}`, "key-1"),
 			wantStatus: http.StatusBadRequest,
-			wantBody:   `{"code":"INVALID_IDEMPOTENCY_KEY","message":"Idempotency-Key must be a UUID"}`,
+			wantBody:   badKey,
+		},
+		{
+			name:       "malformed JSON",
+			req:        postUpdate(`{"currencyPair":`, k),
+			wantStatus: http.StatusBadRequest,
+			wantBody:   `{"code":"INVALID_BODY","message":"Invalid JSON body"}`,
+		},
+		{
+			name:       "unknown field, as the spec forbids additional properties",
+			req:        postUpdate(`{"currencyPair":"EUR/MXN","pair":"EUR/USD"}`, k),
+			wantStatus: http.StatusBadRequest,
+			wantBody:   `{"code":"INVALID_BODY","message":"Invalid JSON body"}`,
+		},
+		{
+			name:       "body over the limit is not read to the end",
+			req:        postUpdate(`{"currencyPair":"`+strings.Repeat("A", maxBodyBytes)+`"}`, k),
+			wantStatus: http.StatusRequestEntityTooLarge,
+			wantBody:   `{"code":"BODY_TOO_LARGE","message":"Request body is too large"}`,
 		},
 		{
 			name:       "invalid pair never reaches the service",
-			req:        postUpdate(`{"currencyPair":"eur/mxn"}`, ""),
+			req:        postUpdate(`{"currencyPair":"eur/mxn"}`, k),
 			wantStatus: http.StatusBadRequest,
 			wantBody:   `{"code":"INVALID_PAIR","message":"Currency pair must look like EUR/MXN"}`,
 		},
 		{
 			name: "key reused for another pair",
-			req:  postUpdate(`{"currencyPair":"EUR/USD"}`, key.String()),
+			req:  postUpdate(`{"currencyPair":"EUR/USD"}`, k),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), eurUSD, isKey).Return(uuid.Nil, domain.ErrIdempotencyConflict)
+				m.EXPECT().RequestUpdate(gomock.Any(), eurUSD, key).Return(uuid.Nil, domain.ErrIdempotencyConflict)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
 			wantBody:   `{"code":"IDEMPOTENCY_KEY_REUSED","message":"Idempotency-Key was already used for another currency pair"}`,
 		},
 		{
-			name: "unexpected error does not leak details",
-			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, ""),
+			name: "client gone: no body and no error",
+			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, k),
 			setup: func(m *mocks.MockQuoteService) {
-				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, gomock.Nil()).Return(uuid.Nil, errUnknown)
+				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, key).
+					Return(uuid.Nil, fmt.Errorf("save update: %w", context.Canceled))
+			},
+			wantStatus: statusClientClosedRequest,
+		},
+		{
+			name: "unexpected error does not leak details",
+			req:  postUpdate(`{"currencyPair":"EUR/MXN"}`, k),
+			setup: func(m *mocks.MockQuoteService) {
+				m.EXPECT().RequestUpdate(gomock.Any(), eurMXN, key).Return(uuid.Nil, errUnknown)
 			},
 			wantStatus: http.StatusInternalServerError,
 			wantBody:   `{"code":"INTERNAL_ERROR","message":"Internal server error"}`,
 		},
-	}, func(h *QuoteHandler) http.HandlerFunc { return h.RequestQuoteUpdate })
+	}, func(h *quoteHandler) http.HandlerFunc { return h.RequestQuoteUpdate })
 }
 
 func getUpdate(id string) *http.Request {
@@ -240,7 +247,7 @@ func TestGetQuoteUpdate(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 			wantBody:   `{"code":"NOT_FOUND","message":"Not found"}`,
 		},
-	}, func(h *QuoteHandler) http.HandlerFunc { return h.GetQuoteUpdate })
+	}, func(h *quoteHandler) http.HandlerFunc { return h.GetQuoteUpdate })
 }
 
 func getLatest(rawQuery string) *http.Request {
@@ -296,5 +303,5 @@ func TestGetLatestQuote(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 			wantBody:   `{"code":"NOT_FOUND","message":"Not found"}`,
 		},
-	}, func(h *QuoteHandler) http.HandlerFunc { return h.GetLatestQuote })
+	}, func(h *quoteHandler) http.HandlerFunc { return h.GetLatestQuote })
 }

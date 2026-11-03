@@ -1,4 +1,4 @@
-package app
+package httpapi
 
 import (
 	"bytes"
@@ -7,50 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
-
-	"github.com/GlebHaik/currency-quotes/internal/config"
-	"github.com/GlebHaik/currency-quotes/internal/handler"
 )
-
-func TestRequestTimeout(t *testing.T) {
-	tests := []struct {
-		name         string
-		timeout      time.Duration
-		wantDeadline bool
-	}{
-		{name: "sets a deadline on the request context", timeout: 5 * time.Second, wantDeadline: true},
-		{name: "zero leaves requests unbounded", timeout: 0, wantDeadline: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var deadline time.Time
-			var ok bool
-			h := requestTimeout(tt.timeout)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				deadline, ok = r.Context().Deadline()
-			}))
-
-			start := time.Now()
-			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
-
-			if ok != tt.wantDeadline {
-				t.Fatalf("deadline set = %v, want %v", ok, tt.wantDeadline)
-			}
-			if ok && (deadline.Before(start) || deadline.After(start.Add(tt.timeout+time.Second))) {
-				t.Fatalf("deadline %v is not about %v after the request started", deadline, tt.timeout)
-			}
-		})
-	}
-}
 
 func TestRouterErrorsAndAccessLog(t *testing.T) {
 	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
 	// The service is never reached: every case fails in the router.
-	router := newRouter(config.HTTPConfig{}, handler.NewQuoteHandler(nil))
+	router := NewRouter(nil, slog.New(slog.NewJSONHandler(&logs, nil)), 0)
 
 	tests := []struct {
 		name       string

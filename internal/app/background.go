@@ -50,16 +50,18 @@ type background struct {
 	claimer   batchClaimer
 	processor batchProcessor
 	cfg       backgroundConfig
+	log       *slog.Logger
 	batches   chan service.Batch
 	wake      chan struct{}
 }
 
-func newBackground(claimer batchClaimer, processor batchProcessor, cfg backgroundConfig) *background {
+func newBackground(claimer batchClaimer, processor batchProcessor, cfg backgroundConfig, log *slog.Logger) *background {
 	cfg = cfg.withDefaults()
 	return &background{
 		claimer:   claimer,
 		processor: processor,
 		cfg:       cfg,
+		log:       log,
 		batches:   make(chan service.Batch, cfg.QueueSize),
 		// Buffer of one: any number of Notify calls between two polls collapse into one wake-up.
 		wake: make(chan struct{}, 1),
@@ -115,7 +117,7 @@ func (b *background) claim(ctx context.Context) {
 	batches, err := b.claimer.Claim(ctx, min(b.cfg.BatchSize, free))
 	if err != nil {
 		if ctx.Err() == nil {
-			slog.Error("claim pending updates", "err", err)
+			b.log.Error("claim pending updates", "err", err)
 		}
 		return
 	}
@@ -147,11 +149,11 @@ func (b *background) work(ctx context.Context, id int) {
 func (b *background) handle(ctx context.Context, id int, batch service.Batch) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("panic in worker", "worker", id, "pair", batch.Pair.String(), "panic", r,
+			b.log.Error("panic in worker", "worker", id, "pair", batch.Pair.String(), "panic", r,
 				"stack", string(debug.Stack()))
 		}
 	}()
 	if err := b.processor.Process(ctx, batch); err != nil {
-		slog.Error("process batch", "worker", id, "pair", batch.Pair.String(), "err", err)
+		b.log.Error("process batch", "worker", id, "pair", batch.Pair.String(), "err", err)
 	}
 }

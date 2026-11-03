@@ -37,10 +37,10 @@ type CurrencyPair = string
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
-	// Code Example: QUOTE_NOT_FOUND
+	// Code Example: NOT_FOUND
 	Code string `json:"code"`
 
-	// Message Example: No quote is available for the requested currency pair
+	// Message Example: Not found
 	Message string `json:"message"`
 }
 
@@ -128,10 +128,10 @@ type GetLatestQuoteParams struct {
 
 // RequestQuoteUpdateParams defines parameters for RequestQuoteUpdate.
 type RequestQuoteUpdateParams struct {
-	// IdempotencyKey Client-generated UUID that makes retries safe.
+	// IdempotencyKey Client-generated UUID that makes retries safe; one per logical request, reused on retries.
 	// A retry with the same key and pair returns the original updateId and starts no new refresh.
-	// A value that is not a UUID is rejected with 400.
-	IdempotencyKey *openapi_types.UUID `json:"Idempotency-Key,omitempty"`
+	// A missing header or a value that is not a UUID is rejected with 400.
+	IdempotencyKey openapi_types.UUID `json:"Idempotency-Key"`
 }
 
 // RequestQuoteUpdateJSONRequestBody defines body for RequestQuoteUpdate for application/json ContentType.

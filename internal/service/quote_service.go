@@ -35,8 +35,8 @@ func NewQuoteService(repository Repository, notifier Notifier) *QuoteService {
 }
 
 // RequestUpdate stores a pending update and returns its ID. A retry with the same idempotency key
-// returns the original update instead of creating a new one; a nil key means the client sent none.
-func (s *QuoteService) RequestUpdate(ctx context.Context, pair domain.CurrencyPair, idempotencyKey *uuid.UUID) (uuid.UUID, error) {
+// returns the original update instead of creating a new one.
+func (s *QuoteService) RequestUpdate(ctx context.Context, pair domain.CurrencyPair, idempotencyKey uuid.UUID) (uuid.UUID, error) {
 	updateID := uuid.New()
 	saved, err := s.repository.SaveUpdate(ctx, domain.UpdateOperation{
 		ID:             updateID,

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +18,8 @@ var (
 	_ batchProcessor   = (*service.QuoteUpdater)(nil)
 	_ service.Notifier = (*background)(nil)
 )
+
+var discard = slog.New(slog.DiscardHandler)
 
 // fakeClaimer hands out queued batches, at most limit per claim, like a leasing store would.
 type fakeClaimer struct {
@@ -94,7 +97,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 func TestNotifyDoesNotBlock(t *testing.T) {
-	b := newBackground(&fakeClaimer{}, done(func(context.Context, service.Batch) {}), backgroundConfig{})
+	b := newBackground(&fakeClaimer{}, done(func(context.Context, service.Batch) {}), backgroundConfig{}, discard)
 	done := make(chan struct{})
 	go func() {
 		for range 1000 {
@@ -116,7 +119,7 @@ func TestNotifyWakesDispatcherBeforeTick(t *testing.T) {
 	claimer := &fakeClaimer{}
 	var processed atomic.Int32
 	b := newBackground(claimer, done(func(context.Context, service.Batch) { processed.Add(1) }),
-		backgroundConfig{PollInterval: time.Hour})
+		backgroundConfig{PollInterval: time.Hour}, discard)
 	startBackground(t, b)
 
 	claimer.add("EUR/MXN")
@@ -128,7 +131,7 @@ func TestClaimIsLimitedByFreeChannelSpace(t *testing.T) {
 	const queueSize = 16
 	claimer := &fakeClaimer{}
 	b := newBackground(claimer, done(func(context.Context, service.Batch) {}),
-		backgroundConfig{BatchSize: 1000, QueueSize: queueSize, PollInterval: time.Hour})
+		backgroundConfig{BatchSize: 1000, QueueSize: queueSize, PollInterval: time.Hour}, discard)
 	startBackground(t, b)
 
 	waitFor(t, "first claim", func() bool { return claimer.firstLimit() >= 0 })
@@ -138,7 +141,7 @@ func TestClaimIsLimitedByFreeChannelSpace(t *testing.T) {
 }
 
 func TestSendGivesUpOnCancel(t *testing.T) {
-	b := newBackground(&fakeClaimer{}, done(func(context.Context, service.Batch) {}), backgroundConfig{})
+	b := newBackground(&fakeClaimer{}, done(func(context.Context, service.Batch) {}), backgroundConfig{}, discard)
 	for range cap(b.batches) {
 		b.batches <- service.Batch{}
 	}
@@ -164,7 +167,7 @@ func TestWorkersRunInParallel(t *testing.T) {
 	b := newBackground(claimer, done(func(context.Context, service.Batch) {
 		time.Sleep(200 * time.Millisecond)
 		processed.Add(1)
-	}), backgroundConfig{Workers: 4, PollInterval: 10 * time.Millisecond})
+	}), backgroundConfig{Workers: 4, PollInterval: 10 * time.Millisecond}, discard)
 
 	start := time.Now()
 	startBackground(t, b)
@@ -183,7 +186,7 @@ func TestPanicDoesNotKillWorkers(t *testing.T) {
 			panic("boom")
 		}
 		okDone.Store(true)
-	}), backgroundConfig{Workers: 1, PollInterval: 10 * time.Millisecond})
+	}), backgroundConfig{Workers: 1, PollInterval: 10 * time.Millisecond}, discard)
 
 	startBackground(t, b)
 	waitFor(t, "second batch processed after a panic in the first", okDone.Load)
@@ -199,7 +202,7 @@ func TestFailedBatchDoesNotStopWorker(t *testing.T) {
 		}
 		okDone.Store(true)
 		return nil
-	}), backgroundConfig{Workers: 1, PollInterval: 10 * time.Millisecond})
+	}), backgroundConfig{Workers: 1, PollInterval: 10 * time.Millisecond}, discard)
 
 	startBackground(t, b)
 	waitFor(t, "second batch processed after the first one failed", okDone.Load)
@@ -213,7 +216,7 @@ func TestRunStopsOnCancelWhileProcessorIsBusy(t *testing.T) {
 	b := newBackground(claimer, done(func(ctx context.Context, _ service.Batch) {
 		once.Do(func() { close(called) })
 		<-ctx.Done()
-	}), backgroundConfig{PollInterval: 10 * time.Millisecond})
+	}), backgroundConfig{PollInterval: 10 * time.Millisecond}, discard)
 
 	stop := startBackground(t, b)
 	<-called

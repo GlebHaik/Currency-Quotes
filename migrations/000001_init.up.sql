@@ -7,8 +7,8 @@ CREATE TABLE quote_updates (
     -- Day the provider's rate applies to (ECB publishes once per business day).
     source_date     DATE,
     error           TEXT,
-    -- NULL when the request had no key; NULLs never conflict.
-    idempotency_key UUID UNIQUE,
+    -- Required: a retried request finds its original update by this key.
+    idempotency_key UUID NOT NULL UNIQUE,
     attempts        INT NOT NULL DEFAULT 0,
     locked_until    TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -1,9 +1,10 @@
-package handler
+package httpapi
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -16,23 +17,24 @@ import (
 //go:generate go tool mockgen -source=quote_handler.go -destination=mocks/quote_handler.go -package=mocks -typed
 
 type QuoteService interface {
-	RequestUpdate(ctx context.Context, pair domain.CurrencyPair, idempotencyKey *uuid.UUID) (uuid.UUID, error)
+	RequestUpdate(ctx context.Context, pair domain.CurrencyPair, idempotencyKey uuid.UUID) (uuid.UUID, error)
 	GetUpdate(ctx context.Context, id uuid.UUID) (domain.UpdateOperation, error)
 	GetLatestQuote(ctx context.Context, pair domain.CurrencyPair) (domain.Quote, error)
 }
 
-type QuoteHandler struct {
+type quoteHandler struct {
 	service QuoteService
+	log     *slog.Logger
 }
 
-func NewQuoteHandler(s QuoteService) *QuoteHandler {
-	return &QuoteHandler{service: s}
+func newQuoteHandler(s QuoteService, log *slog.Logger) *quoteHandler {
+	return &quoteHandler{service: s, log: log}
 }
 
 // maxBodyBytes is far above any valid request, which is a few dozen bytes.
 const maxBodyBytes = 1 << 10
 
-func (h *QuoteHandler) RequestQuoteUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *quoteHandler) RequestQuoteUpdate(w http.ResponseWriter, r *http.Request) {
 	var request api.UpdateQuoteRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
@@ -47,19 +49,19 @@ func (h *QuoteHandler) RequestQuoteUpdate(w http.ResponseWriter, r *http.Request
 
 	pair, err := domain.ParseCurrencyPair(request.CurrencyPair)
 	if err != nil {
-		writeServiceError(w, r, err)
+		h.writeDomainError(w, r, err)
 		return
 	}
 
 	idempotencyKey, err := parseIdempotencyKey(r.Header.Get("Idempotency-Key"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a UUID")
+		writeError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key header is required and must be a UUID")
 		return
 	}
 
 	updateID, err := h.service.RequestUpdate(r.Context(), pair, idempotencyKey)
 	if err != nil {
-		writeServiceError(w, r, err)
+		h.writeDomainError(w, r, err)
 		return
 	}
 
@@ -67,7 +69,7 @@ func (h *QuoteHandler) RequestQuoteUpdate(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusAccepted, api.UpdateAcceptedResponse{UpdateId: updateID, Status: api.Pending})
 }
 
-func (h *QuoteHandler) GetQuoteUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *quoteHandler) GetQuoteUpdate(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("updateId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ID", "Invalid update ID")
@@ -76,7 +78,7 @@ func (h *QuoteHandler) GetQuoteUpdate(w http.ResponseWriter, r *http.Request) {
 
 	update, err := h.service.GetUpdate(r.Context(), id)
 	if err != nil {
-		writeServiceError(w, r, err)
+		h.writeDomainError(w, r, err)
 		return
 	}
 
@@ -97,16 +99,16 @@ func (h *QuoteHandler) GetQuoteUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (h *QuoteHandler) GetLatestQuote(w http.ResponseWriter, r *http.Request) {
+func (h *quoteHandler) GetLatestQuote(w http.ResponseWriter, r *http.Request) {
 	pair, err := domain.ParseCurrencyPair(r.URL.Query().Get("currencyPair"))
 	if err != nil {
-		writeServiceError(w, r, err)
+		h.writeDomainError(w, r, err)
 		return
 	}
 
 	quote, err := h.service.GetLatestQuote(r.Context(), pair)
 	if err != nil {
-		writeServiceError(w, r, err)
+		h.writeDomainError(w, r, err)
 		return
 	}
 
@@ -118,17 +120,14 @@ func (h *QuoteHandler) GetLatestQuote(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parseIdempotencyKey returns nil for an absent header. uuid.Parse normalises case, so one UUID
-// in upper and lower case is one key. The nil UUID is rejected: all clients sending it would share it.
-func parseIdempotencyKey(header string) (*uuid.UUID, error) {
-	if header == "" {
-		return nil, nil
-	}
+// parseIdempotencyKey requires a UUID. uuid.Parse normalises case, so one UUID in upper and
+// lower case is one key. The nil UUID is rejected: all clients sending it would share it.
+func parseIdempotencyKey(header string) (uuid.UUID, error) {
 	key, err := uuid.Parse(header)
 	if err != nil || key == uuid.Nil {
-		return nil, errors.New("invalid idempotency key")
+		return uuid.Nil, errors.New("idempotency key must be a non-nil UUID")
 	}
-	return &key, nil
+	return key, nil
 }
 
 func sourceDate(q domain.Quote) *openapi_types.Date {

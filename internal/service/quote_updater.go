@@ -86,11 +86,7 @@ type QuoteUpdater struct {
 	now      func() time.Time // replaced in tests
 }
 
-// NewQuoteUpdater uses slog.Default() when log is nil.
 func NewQuoteUpdater(store UpdateStore, provider RateProvider, cfg UpdaterConfig, log *slog.Logger) *QuoteUpdater {
-	if log == nil {
-		log = slog.Default()
-	}
 	return &QuoteUpdater{store: store, provider: provider, cfg: cfg.withDefaults(), log: log, now: time.Now}
 }
 

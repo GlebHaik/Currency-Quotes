@@ -37,7 +37,7 @@ func run(configPath string) error {
 	}
 	slog.SetDefault(logger)
 
-	return app.Run(ctx, cfg)
+	return app.Run(ctx, cfg, logger)
 }
 
 func newLogger(cfg config.LogConfig) (*slog.Logger, error) {
