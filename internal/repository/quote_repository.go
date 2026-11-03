@@ -21,12 +21,12 @@ func NewQuoteRepository(pool *pgxpool.Pool) *QuoteRepository {
 	return &QuoteRepository{pool: pool}
 }
 
-const updateColumns = `id::text, pair, status, price::text, error, attempts, created_at, updated_at, source_date`
+const updateColumns = `id, pair, status, price::text, error, attempts, created_at, updated_at, source_date`
 
 func (r *QuoteRepository) SaveUpdate(ctx context.Context, u domain.UpdateOperation) (domain.UpdateOperation, error) {
 	row := r.pool.QueryRow(ctx, `
 	INSERT INTO quote_updates (id, pair, status, created_at, idempotency_key)
-	VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''))
+	VALUES ($1, $2, $3, $4, $5)
 	ON CONFLICT (idempotency_key) DO NOTHING
 	RETURNING `+updateColumns,
 		u.ID, u.CurrencyPair, u.Status, u.CreatedAt, u.IdempotencyKey)
@@ -44,7 +44,7 @@ func (r *QuoteRepository) SaveUpdate(ctx context.Context, u domain.UpdateOperati
 }
 
 func (r *QuoteRepository) GetUpdate(ctx context.Context, id uuid.UUID) (domain.UpdateOperation, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+updateColumns+` FROM quote_updates WHERE id = $1::uuid`, id)
+	row := r.pool.QueryRow(ctx, `SELECT `+updateColumns+` FROM quote_updates WHERE id = $1`, id)
 	u, err := scanUpdate(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.UpdateOperation{}, domain.ErrNotFound
@@ -98,12 +98,12 @@ func (r *QuoteRepository) ClaimPending(ctx context.Context, limit int, lease tim
 	return updates, nil
 }
 
-func (r *QuoteRepository) CompleteUpdates(ctx context.Context, ids []string, q domain.Quote) error {
+func (r *QuoteRepository) CompleteUpdates(ctx context.Context, ids []uuid.UUID, q domain.Quote) error {
 	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			UPDATE quote_updates
 			SET status = 'completed', price = $2::numeric, updated_at = $3, source_date = $4, locked_until = NULL
-			WHERE id = ANY($1::uuid[]) AND status = 'pending'`,
+			WHERE id = ANY($1) AND status = 'pending'`,
 			ids, q.Price, q.UpdatedAt, nullDate(q.SourceDate))
 		if err != nil {
 			return fmt.Errorf("complete quote updates: %w", err)
@@ -112,11 +112,11 @@ func (r *QuoteRepository) CompleteUpdates(ctx context.Context, ids []string, q d
 	})
 }
 
-func (r *QuoteRepository) FailUpdates(ctx context.Context, ids []string, reason string) error {
+func (r *QuoteRepository) FailUpdates(ctx context.Context, ids []uuid.UUID, reason string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE quote_updates
 		SET status = 'failed', error = $2, updated_at = now(), locked_until = NULL
-		WHERE id = ANY($1::uuid[]) AND status = 'pending'`,
+		WHERE id = ANY($1) AND status = 'pending'`,
 		ids, reason)
 	if err != nil {
 		return fmt.Errorf("fail quote updates: %w", err)
@@ -124,11 +124,11 @@ func (r *QuoteRepository) FailUpdates(ctx context.Context, ids []string, reason 
 	return nil
 }
 
-func (r *QuoteRepository) RetryLater(ctx context.Context, ids []string, delay time.Duration) error {
+func (r *QuoteRepository) RetryLater(ctx context.Context, ids []uuid.UUID, delay time.Duration) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE quote_updates
 		SET locked_until = now() + make_interval(secs => $2)
-		WHERE id = ANY($1::uuid[]) AND status = 'pending'`,
+		WHERE id = ANY($1) AND status = 'pending'`,
 		ids, delay.Seconds())
 	if err != nil {
 		return fmt.Errorf("retry quote updates: %w", err)

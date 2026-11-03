@@ -19,11 +19,12 @@ paths:
           in: header
           required: false
           description: |
-            Client-generated key (a UUID is recommended) that makes retries safe.
+            Client-generated UUID that makes retries safe.
             A retry with the same key and pair returns the original updateId and starts no new refresh.
+            A value that is not a UUID is rejected with 400.
           schema:
             type: string
-            maxLength: 255
+            format: uuid
           example: 8e3b1c2a-4f5d-4e6a-9b7c-1d2e3f4a5b6c
       requestBody:
         required: true
@@ -55,6 +56,8 @@ paths:
           $ref: '#/components/responses/IdempotencyKeyReused'
         '500':
           $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/Timeout'
   /api/v1/quotes/updates/{updateId}:
     get:
       summary: Get a quote refresh result
@@ -101,6 +104,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/Timeout'
   /api/v1/quotes/latest:
     get:
       summary: Get the latest available quote
@@ -132,6 +137,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/Timeout'
 components:
   schemas:
     CurrencyPair:
@@ -235,6 +242,15 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Timeout:
+      description: The request did not finish within the server's request timeout, usually waiting for the database
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: TIMEOUT
+            message: Request timed out
     InternalError:
       description: Unexpected server error
       content:

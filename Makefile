@@ -2,12 +2,12 @@ HTTP_PORT ?= 8085
 DB_URL    ?= postgres://currency:currency@localhost:5442/currency?sslmode=disable
 BIN       := bin/currency
 TEST      ?= .
-PKG       ?= ./internal/worker/
+PKG       ?= ./internal/service/
 
 .DEFAULT_GOAL := help
 
 .PHONY: help up down reset-db run build docker-up docker-logs test test-race test-one cover \
-	fmt vet lint check gen tidy vuln \
+	fmt vet lint check gen mocks tidy vuln \
 	psql updates migrate-version migrate-down migrate-create
 
 help: ## Show this list
@@ -44,7 +44,7 @@ test: ## Run all tests
 test-race: ## Run all tests with the race detector
 	go test -race -count=1 ./...
 
-test-one: ## Run one test: make test-one TEST=TestName [PKG=./internal/worker/]
+test-one: ## Run one test: make test-one TEST=TestName [PKG=./internal/service/]
 	go test -race -count=1 -v -run '$(TEST)' $(PKG)
 
 cover: ## Show test coverage in the browser
@@ -67,6 +67,9 @@ check: fmt vet lint test-race ## Everything to run before a commit
 
 gen: ## Regenerate API types from api/openapi.yaml
 	oapi-codegen -generate types -package api api/openapi.yaml > internal/api/generated.go
+
+mocks: ## Regenerate gomock mocks (go generate, mockgen is a go tool in go.mod)
+	go generate ./...
 
 tidy: ## Clean up go.mod and go.sum
 	go mod tidy

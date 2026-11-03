@@ -8,10 +8,11 @@ import (
 )
 
 type Config struct {
-	HTTP     HTTPConfig     `yaml:"http"`
-	Database DatabaseConfig `yaml:"database"`
-	Provider ProviderConfig `yaml:"provider"`
-	Worker   WorkerConfig   `yaml:"worker"`
+	HTTP       HTTPConfig       `yaml:"http"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Provider   ProviderConfig   `yaml:"provider"`
+	Updater    UpdaterConfig    `yaml:"updater"`
+	Background BackgroundConfig `yaml:"background"`
 }
 
 type HTTPConfig struct {
@@ -19,30 +20,35 @@ type HTTPConfig struct {
 	ReadTimeout     time.Duration `yaml:"read_timeout"`
 	WriteTimeout    time.Duration `yaml:"write_timeout"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	// RequestTimeout bounds each request, database calls included; 0 means no limit.
+	RequestTimeout time.Duration `yaml:"request_timeout" env:"HTTP_REQUEST_TIMEOUT"`
 }
 
 type DatabaseConfig struct {
 	URL          string `yaml:"url" env:"DATABASE_URL"`
 	MaxOpenConns int    `yaml:"max_open_conns" env:"DATABASE_MAX_OPEN_CONNS"`
-	MaxIdleConns int    `yaml:"max_idle_conns" env:"DATABASE_MAX_IDLE_CONNS"`
 }
 
 type ProviderConfig struct {
-	BaseURL            string        `yaml:"base_url" env:"PROVIDER_BASE_URL"`
-	Timeout            time.Duration `yaml:"timeout"`
-	RPS                float64       `yaml:"rps"`
-	Burst              int           `yaml:"burst"`
-	MaxPairsPerRequest int           `yaml:"max_pairs_per_request"`
+	BaseURL string        `yaml:"base_url" env:"PROVIDER_BASE_URL"`
+	Timeout time.Duration `yaml:"timeout"`
+	RPS     float64       `yaml:"rps"`
+	Burst   int           `yaml:"burst"`
 }
 
-type WorkerConfig struct {
-	Workers      int           `yaml:"workers" env:"WORKER_COUNT"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	BatchSize    int           `yaml:"batch_size"`
+type UpdaterConfig struct {
 	LockTTL      time.Duration `yaml:"lock_ttl"`
 	MaxAttempts  int           `yaml:"max_attempts"`
 	RetryBackoff time.Duration `yaml:"retry_backoff"`
 	MaxBackoff   time.Duration `yaml:"max_backoff"`
+	// FinalizeTimeout bounds the DB write that records a result while the service shuts down.
+	FinalizeTimeout time.Duration `yaml:"finalize_timeout"`
+}
+
+type BackgroundConfig struct {
+	Workers      int           `yaml:"workers" env:"BACKGROUND_WORKERS"`
+	PollInterval time.Duration `yaml:"poll_interval"`
+	BatchSize    int           `yaml:"batch_size"`
 }
 
 func Load(path string) (*Config, error) {

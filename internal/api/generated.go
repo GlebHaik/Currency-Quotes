@@ -114,6 +114,9 @@ type InternalError = ErrorResponse
 // NotFound defines model for NotFound.
 type NotFound = ErrorResponse
 
+// Timeout defines model for Timeout.
+type Timeout = ErrorResponse
+
 // GetLatestQuoteParams defines parameters for GetLatestQuote.
 type GetLatestQuoteParams struct {
 	// CurrencyPair Currency pair in BASE/QUOTE format; slash must be URL-encoded in requests
@@ -122,9 +125,10 @@ type GetLatestQuoteParams struct {
 
 // RequestQuoteUpdateParams defines parameters for RequestQuoteUpdate.
 type RequestQuoteUpdateParams struct {
-	// IdempotencyKey Client-generated key (a UUID is recommended) that makes retries safe.
+	// IdempotencyKey Client-generated UUID that makes retries safe.
 	// A retry with the same key and pair returns the original updateId and starts no new refresh.
-	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
+	// A value that is not a UUID is rejected with 400.
+	IdempotencyKey *openapi_types.UUID `json:"Idempotency-Key,omitempty"`
 }
 
 // RequestQuoteUpdateJSONRequestBody defines body for RequestQuoteUpdate for application/json ContentType.

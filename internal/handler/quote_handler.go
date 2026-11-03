@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -14,8 +15,10 @@ import (
 	"github.com/GlebHaik/currency-quotes/internal/service"
 )
 
+//go:generate go tool mockgen -source=quote_handler.go -destination=mocks/quote_handler.go -package=mocks -typed
+
 type QuoteService interface {
-	RequestUpdate(ctx context.Context, pair string, idempotencyKey string) (uuid.UUID, error)
+	RequestUpdate(ctx context.Context, pair string, idempotencyKey *uuid.UUID) (uuid.UUID, error)
 	GetUpdate(ctx context.Context, id uuid.UUID) (domain.UpdateOperation, error)
 	GetLatestQuote(ctx context.Context, pair string) (domain.Quote, error)
 }
@@ -39,14 +42,20 @@ func (h *QuoteHandler) RequestQuoteUpdate(
 		return
 	}
 
+	idempotencyKey, err := parseIdempotencyKey(r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a UUID")
+		return
+	}
+
 	updateID, err := h.service.RequestUpdate(
 		r.Context(),
 		request.CurrencyPair,
-		r.Header.Get("Idempotency-Key"),
+		idempotencyKey,
 	)
 
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, r, err)
 		return
 	}
 
@@ -70,7 +79,7 @@ func (h *QuoteHandler) GetQuoteUpdate(
 
 	update, err := h.service.GetUpdate(r.Context(), id)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, r, err)
 		return
 	}
 
@@ -101,7 +110,7 @@ func (h *QuoteHandler) GetLatestQuote(
 
 	quote, err := h.service.GetLatestQuote(r.Context(), pair)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, r, err)
 		return
 	}
 
@@ -113,6 +122,20 @@ func (h *QuoteHandler) GetLatestQuote(
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+// parseIdempotencyKey returns nil for an absent header. uuid.Parse also normalises the key,
+// so the same UUID in upper and lower case is one key. The nil UUID is rejected: every client
+// that sent it would share one key.
+func parseIdempotencyKey(header string) (*uuid.UUID, error) {
+	if header == "" {
+		return nil, nil
+	}
+	key, err := uuid.Parse(header)
+	if err != nil || key == uuid.Nil {
+		return nil, errors.New("invalid idempotency key")
+	}
+	return &key, nil
 }
 
 // sourceDate leaves the field out of the response when the provider date is unknown.
@@ -136,7 +159,7 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-func writeServiceError(w http.ResponseWriter, err error) {
+func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, service.ErrInvalidPair):
 		writeError(w, http.StatusBadRequest, "INVALID_PAIR", err.Error())
@@ -144,13 +167,17 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, service.ErrNotFound):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 
-	case errors.Is(err, service.ErrInvalidIdempotencyKey):
-		writeError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", err.Error())
-
 	case errors.Is(err, service.ErrIdempotencyConflict):
 		writeError(w, http.StatusUnprocessableEntity, "IDEMPOTENCY_KEY_REUSED", err.Error())
 
+	case errors.Is(err, context.DeadlineExceeded):
+		// The request deadline (HTTP request_timeout) ran out, usually waiting for the database.
+		slog.Warn("request timed out", "method", r.Method, "path", r.URL.Path, "err", err)
+		writeError(w, http.StatusGatewayTimeout, "TIMEOUT", "Request timed out")
+
 	default:
+		// The client gets a generic message; the cause goes to the log, or it is lost.
+		slog.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
 	}
 }
