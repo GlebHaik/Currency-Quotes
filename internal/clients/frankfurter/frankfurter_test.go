@@ -40,13 +40,14 @@ func TestClient(t *testing.T) {
 	}
 
 	_, err = c.Rate(ctx, domain.MustParseCurrencyPair("EUR/XXX"))
-	var ferr *Error
-	if !errors.Is(err, domain.ErrPermanent) || !errors.As(err, &ferr) || ferr.Message != "invalid currency: XXX" {
+	ferr, ok := errors.AsType[*Error](err)
+	if !errors.Is(err, domain.ErrPermanent) || !ok || ferr.Message != "invalid currency: XXX" {
 		t.Fatalf("422 must be permanent with the provider message, got %v", err)
 	}
 
 	_, err = c.Rate(ctx, domain.MustParseCurrencyPair("EUR/USD"))
-	if errors.Is(err, domain.ErrPermanent) || !errors.As(err, &ferr) || ferr.RetryAfter() != 7*time.Second {
+	ferr, ok = errors.AsType[*Error](err)
+	if errors.Is(err, domain.ErrPermanent) || !ok || ferr.RetryAfter() != 7*time.Second {
 		t.Fatalf("429 must be retryable with Retry-After, got %v", err)
 	}
 

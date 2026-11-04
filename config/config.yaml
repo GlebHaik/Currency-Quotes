@@ -22,7 +22,7 @@ provider:
 
 # How one batch of updates is processed.
 updater:
-  lock_ttl: 30s
+  lock_ttl: 60s
   max_attempts: 3
   retry_backoff: 2s
   max_backoff: 1m
@@ -32,6 +32,5 @@ updater:
 background:
   workers: 4
   poll_interval: 1s
-  batch_size: 100
-  # Claimed batches waiting for a worker; keep the wait well under updater.lock_ttl.
-  queue_size: 64
+  batch_size: 32
+  queue_size: 32

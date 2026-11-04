@@ -17,9 +17,7 @@ type Config struct {
 }
 
 type LogConfig struct {
-	// Level is debug, info, warn or error.
-	Level string `yaml:"level" env:"LOG_LEVEL" env-default:"info"`
-	// Format is json or text.
+	Level  string `yaml:"level" env:"LOG_LEVEL" env-default:"info"`
 	Format string `yaml:"format" env:"LOG_FORMAT" env-default:"json"`
 }
 
@@ -28,14 +26,12 @@ type HTTPConfig struct {
 	ReadTimeout     time.Duration `yaml:"read_timeout"`
 	WriteTimeout    time.Duration `yaml:"write_timeout"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
-	// RequestTimeout bounds each request, database calls included; 0 means no limit.
-	RequestTimeout time.Duration `yaml:"request_timeout" env:"HTTP_REQUEST_TIMEOUT"`
+	RequestTimeout  time.Duration `yaml:"request_timeout" env:"HTTP_REQUEST_TIMEOUT"`
 }
 
 type DatabaseConfig struct {
-	URL          string `yaml:"url" env:"DATABASE_URL"`
-	MaxOpenConns int    `yaml:"max_open_conns" env:"DATABASE_MAX_OPEN_CONNS"`
-	// MigrationsDir is relative to the working directory.
+	URL           string `yaml:"url" env:"DATABASE_URL"`
+	MaxOpenConns  int    `yaml:"max_open_conns" env:"DATABASE_MAX_OPEN_CONNS"`
 	MigrationsDir string `yaml:"migrations_dir" env:"DATABASE_MIGRATIONS_DIR" env-default:"migrations"`
 }
 
@@ -47,11 +43,10 @@ type ProviderConfig struct {
 }
 
 type UpdaterConfig struct {
-	LockTTL      time.Duration `yaml:"lock_ttl"`
-	MaxAttempts  int           `yaml:"max_attempts"`
-	RetryBackoff time.Duration `yaml:"retry_backoff"`
-	MaxBackoff   time.Duration `yaml:"max_backoff"`
-	// FinalizeTimeout bounds the write of a result that arrives during shutdown.
+	LockTTL         time.Duration `yaml:"lock_ttl"`
+	MaxAttempts     int           `yaml:"max_attempts"`
+	RetryBackoff    time.Duration `yaml:"retry_backoff"`
+	MaxBackoff      time.Duration `yaml:"max_backoff"`
 	FinalizeTimeout time.Duration `yaml:"finalize_timeout"`
 }
 

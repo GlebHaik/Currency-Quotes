@@ -93,8 +93,6 @@ func (c *Client) Rate(ctx context.Context, pair domain.CurrencyPair) (domain.Rat
 	return domain.Rate{Price: payload.Rate.String(), Date: date}, nil
 }
 
-// Error is a non-200 answer. Callers need neither this type nor HTTP details: it matches
-// domain.ErrPermanent when retrying won't help, and exposes Retry-After through RetryAfter.
 type Error struct {
 	StatusCode int
 	Message    string

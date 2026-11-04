@@ -142,7 +142,7 @@ func TestQuoteUpdater_Process(t *testing.T) {
 			setup: func(m updaterMocks, _ context.CancelFunc) {
 				m.provider.EXPECT().Rate(gomock.Any(), eurXXX).
 					Return(domain.Rate{}, fmt.Errorf("%w: invalid currency: XXX", domain.ErrPermanent))
-				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonUnsupportedPair).Return(nil)
+				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonUnsupportedPair, testNow).Return(nil)
 			},
 		},
 		{
@@ -158,7 +158,7 @@ func TestQuoteUpdater_Process(t *testing.T) {
 			batch: Batch{Pair: eurMXN, IDs: ids, Attempts: 3},
 			setup: func(m updaterMocks, _ context.CancelFunc) {
 				m.provider.EXPECT().Rate(gomock.Any(), eurMXN).Return(domain.Rate{}, unavailable)
-				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonProviderUnavailable).Return(nil)
+				m.store.EXPECT().FailUpdates(gomock.Any(), ids, reasonProviderUnavailable, testNow).Return(nil)
 			},
 		},
 		{

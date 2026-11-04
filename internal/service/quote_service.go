@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,7 +45,7 @@ func (s *QuoteService) RequestUpdate(ctx context.Context, pair domain.CurrencyPa
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("save update: %w", err)
+		return uuid.Nil, err
 	}
 
 	if saved.ID != updateID { // the key was already used

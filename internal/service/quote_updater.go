@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"time"
@@ -18,7 +17,7 @@ import (
 type UpdateStore interface {
 	ClaimPending(ctx context.Context, limit int, lease time.Duration) ([]domain.UpdateOperation, error)
 	CompleteUpdates(ctx context.Context, ids []uuid.UUID, q domain.Quote) error
-	FailUpdates(ctx context.Context, ids []uuid.UUID, reason string) error
+	FailUpdates(ctx context.Context, ids []uuid.UUID, reason string, failedAt time.Time) error
 	RetryLater(ctx context.Context, ids []uuid.UUID, delay time.Duration) error
 }
 
@@ -28,6 +27,7 @@ type RateProvider interface {
 
 // retryAfterer is an error carrying the delay the provider asked for, such as a 429 Retry-After.
 type retryAfterer interface {
+	error
 	RetryAfter() time.Duration
 }
 
@@ -98,7 +98,7 @@ func (u *QuoteUpdater) Claim(ctx context.Context, limit int) ([]Batch, error) {
 	}
 	updates, err := u.store.ClaimPending(ctx, limit, u.cfg.LockTTL)
 	if err != nil {
-		return nil, fmt.Errorf("claim pending updates: %w", err)
+		return nil, err
 	}
 	return groupByPair(updates), nil
 }
@@ -146,7 +146,7 @@ func (u *QuoteUpdater) finish(ctx context.Context, b Batch, rate domain.Rate, er
 	case err == nil:
 		q := domain.Quote{CurrencyPair: b.Pair, Price: rate.Price, UpdatedAt: u.now().UTC(), SourceDate: rate.Date}
 		if err := u.store.CompleteUpdates(ctx, b.IDs, q); err != nil {
-			return fmt.Errorf("complete updates of %s: %w", b.Pair, err)
+			return err
 		}
 		log.Info("quote updated", "price", rate.Price)
 	case errors.Is(err, domain.ErrPermanent) || b.Attempts >= u.cfg.MaxAttempts:
@@ -154,16 +154,16 @@ func (u *QuoteUpdater) finish(ctx context.Context, b Batch, rate domain.Rate, er
 		if errors.Is(err, domain.ErrPermanent) {
 			reason = reasonUnsupportedPair
 		}
-		if err := u.store.FailUpdates(ctx, b.IDs, reason); err != nil {
-			return fmt.Errorf("fail updates of %s: %w", b.Pair, err)
+		if err := u.store.FailUpdates(ctx, b.IDs, reason, u.now().UTC()); err != nil {
+			return err
 		}
 		log.Warn("updates failed", "reason", reason, "err", err)
 	default:
 		delay := u.backoff(b.Attempts, err)
 		if err := u.store.RetryLater(ctx, b.IDs, delay); err != nil {
-			return fmt.Errorf("retry updates of %s: %w", b.Pair, err)
+			return err
 		}
-		log.Warn("provider call failed, retrying", "in", delay, "err", err)
+		log.Warn("provider call failed, retrying", "delay_ms", delay.Milliseconds(), "err", err)
 	}
 	return nil
 }
@@ -183,8 +183,7 @@ func (u *QuoteUpdater) backoff(attempt int, err error) time.Duration {
 
 	delay := jitter(ceiling)
 
-	var ra retryAfterer
-	if errors.As(err, &ra) && ra.RetryAfter() > delay {
+	if ra, ok := errors.AsType[retryAfterer](err); ok && ra.RetryAfter() > delay {
 		delay = ra.RetryAfter()
 	}
 

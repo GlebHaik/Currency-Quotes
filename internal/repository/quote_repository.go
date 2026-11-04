@@ -106,25 +106,29 @@ func (r *QuoteRepository) ClaimPending(ctx context.Context, limit int, lease tim
 // CompleteUpdates records the price on the updates and in quotes in one transaction,
 // so the two tables never disagree.
 func (r *QuoteRepository) CompleteUpdates(ctx context.Context, ids []uuid.UUID, q domain.Quote) error {
-	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			UPDATE quote_updates
 			SET status = 'completed', price = $2::numeric, updated_at = $3, source_date = $4, locked_until = NULL
 			WHERE id = ANY($1) AND status = 'pending'`,
 			ids, q.Price, q.UpdatedAt, nullDate(q.SourceDate))
 		if err != nil {
-			return fmt.Errorf("complete quote updates: %w", err)
+			return err
 		}
 		return saveQuote(ctx, tx, q)
 	})
+	if err != nil {
+		return fmt.Errorf("complete quote updates: %w", err)
+	}
+	return nil
 }
 
-func (r *QuoteRepository) FailUpdates(ctx context.Context, ids []uuid.UUID, reason string) error {
+func (r *QuoteRepository) FailUpdates(ctx context.Context, ids []uuid.UUID, reason string, failedAt time.Time) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE quote_updates
-		SET status = 'failed', error = $2, updated_at = now(), locked_until = NULL
+		SET status = 'failed', error = $2, updated_at = $3, locked_until = NULL
 		WHERE id = ANY($1) AND status = 'pending'`,
-		ids, reason)
+		ids, reason, failedAt)
 	if err != nil {
 		return fmt.Errorf("fail quote updates: %w", err)
 	}

@@ -21,8 +21,6 @@ import (
 	"github.com/GlebHaik/currency-quotes/internal/service"
 )
 
-// Run applies migrations and serves HTTP and background updates until ctx is cancelled,
-// then shuts both down gracefully.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err := runMigrations(cfg.Database, log); err != nil {
 		return err
@@ -99,7 +97,6 @@ func newHTTPServer(cfg config.HTTPConfig, h http.Handler) *http.Server {
 }
 
 func runMigrations(cfg config.DatabaseConfig, log *slog.Logger) error {
-	// golang-migrate picks its driver by URL scheme; pgx5:// is the pgx v5 one.
 	dsn := "pgx5://" + strings.TrimPrefix(strings.TrimPrefix(cfg.URL, "postgres://"), "postgresql://")
 
 	m, err := migrate.New("file://"+cfg.MigrationsDir, dsn)

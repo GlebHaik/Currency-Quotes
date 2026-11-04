@@ -111,13 +111,11 @@ func (b *background) dispatch(ctx context.Context) {
 }
 
 func (b *background) claim(ctx context.Context) {
-	// Claim only what fits in the channel now: an update that waits there too long
-	// outlives its lease and is claimed twice.
 	free := cap(b.batches) - len(b.batches)
 	batches, err := b.claimer.Claim(ctx, min(b.cfg.BatchSize, free))
 	if err != nil {
 		if ctx.Err() == nil {
-			b.log.Error("claim pending updates", "err", err)
+			b.log.Error("claim failed", "err", err)
 		}
 		return
 	}
@@ -144,8 +142,6 @@ func (b *background) work(ctx context.Context, id int) {
 	}
 }
 
-// handle keeps a failing or panicking batch from stopping the worker; its updates stay leased
-// and return to the queue when the lease expires.
 func (b *background) handle(ctx context.Context, id int, batch service.Batch) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -154,6 +150,6 @@ func (b *background) handle(ctx context.Context, id int, batch service.Batch) {
 		}
 	}()
 	if err := b.processor.Process(ctx, batch); err != nil {
-		b.log.Error("process batch", "worker", id, "pair", batch.Pair.String(), "err", err)
+		b.log.Error("batch outcome not recorded", "worker", id, "pair", batch.Pair.String(), "err", err)
 	}
 }

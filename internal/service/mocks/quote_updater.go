@@ -121,17 +121,17 @@ func (c *MockUpdateStoreCompleteUpdatesCall) DoAndReturn(f func(context.Context,
 }
 
 // FailUpdates mocks base method.
-func (m *MockUpdateStore) FailUpdates(ctx context.Context, ids []uuid.UUID, reason string) error {
+func (m *MockUpdateStore) FailUpdates(ctx context.Context, ids []uuid.UUID, reason string, failedAt time.Time) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FailUpdates", ctx, ids, reason)
+	ret := m.ctrl.Call(m, "FailUpdates", ctx, ids, reason, failedAt)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FailUpdates indicates an expected call of FailUpdates.
-func (mr *MockUpdateStoreMockRecorder) FailUpdates(ctx, ids, reason any) *MockUpdateStoreFailUpdatesCall {
+func (mr *MockUpdateStoreMockRecorder) FailUpdates(ctx, ids, reason, failedAt any) *MockUpdateStoreFailUpdatesCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FailUpdates", reflect.TypeOf((*MockUpdateStore)(nil).FailUpdates), ctx, ids, reason)
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FailUpdates", reflect.TypeOf((*MockUpdateStore)(nil).FailUpdates), ctx, ids, reason, failedAt)
 	return &MockUpdateStoreFailUpdatesCall{Call: call}
 }
 
@@ -147,13 +147,13 @@ func (c *MockUpdateStoreFailUpdatesCall) Return(arg0 error) *MockUpdateStoreFail
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockUpdateStoreFailUpdatesCall) Do(f func(context.Context, []uuid.UUID, string) error) *MockUpdateStoreFailUpdatesCall {
+func (c *MockUpdateStoreFailUpdatesCall) Do(f func(context.Context, []uuid.UUID, string, time.Time) error) *MockUpdateStoreFailUpdatesCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockUpdateStoreFailUpdatesCall) DoAndReturn(f func(context.Context, []uuid.UUID, string) error) *MockUpdateStoreFailUpdatesCall {
+func (c *MockUpdateStoreFailUpdatesCall) DoAndReturn(f func(context.Context, []uuid.UUID, string, time.Time) error) *MockUpdateStoreFailUpdatesCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
