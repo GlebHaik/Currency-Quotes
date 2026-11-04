@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -19,7 +18,8 @@ func main() {
 	flag.Parse()
 
 	if err := run(*configPath); err != nil {
-		log.Fatal(err)
+		slog.Error("service failed", "err", err)
+		os.Exit(1)
 	}
 }
 

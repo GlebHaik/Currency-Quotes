@@ -21,7 +21,7 @@ func NewQuoteRepository(pool *pgxpool.Pool) *QuoteRepository {
 	return &QuoteRepository{pool: pool}
 }
 
-const updateColumns = `id, pair, status, price::text, error, attempts, created_at, updated_at, source_date`
+const updateColumns = `id, pair, status, price::text, error, attempts, created_at, updated_at, source_date, idempotency_key`
 
 // SaveUpdate inserts u, or returns the existing update with the same idempotency key.
 func (r *QuoteRepository) SaveUpdate(ctx context.Context, u domain.UpdateOperation) (domain.UpdateOperation, error) {
@@ -166,7 +166,7 @@ func scanUpdate(row pgx.Row) (domain.UpdateOperation, error) {
 		updatedAt  *time.Time
 		sourceDate *time.Time
 	)
-	if err := row.Scan(&u.ID, &pair, &u.Status, &price, &errText, &u.Attempts, &u.CreatedAt, &updatedAt, &sourceDate); err != nil {
+	if err := row.Scan(&u.ID, &pair, &u.Status, &price, &errText, &u.Attempts, &u.CreatedAt, &updatedAt, &sourceDate, &u.IdempotencyKey); err != nil {
 		return domain.UpdateOperation{}, err
 	}
 	var err error

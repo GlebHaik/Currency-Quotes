@@ -67,5 +67,18 @@ func Load(path string) (*Config, error) {
 	if err := cleanenv.ReadConfig(path, &cfg); err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
 	return &cfg, nil
+}
+
+// validate rejects settings that would claim an update twice: a lease shorter than one provider
+// call expires mid-flight. A zero lock_ttl is allowed, as the updater then uses its default.
+func (c *Config) validate() error {
+	if c.Updater.LockTTL > 0 && c.Updater.LockTTL <= c.Provider.Timeout {
+		return fmt.Errorf("updater.lock_ttl (%s) must exceed provider.timeout (%s)",
+			c.Updater.LockTTL, c.Provider.Timeout)
+	}
+	return nil
 }
